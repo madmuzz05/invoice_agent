@@ -4,7 +4,7 @@ from baca_invoice.utils.receipt_authenticity import adjust_authenticity_for_subt
 from web.services.result_validator import validate_agent_result
 
 
-def _auth(flags, verdict="AUTENTIK"):
+def _auth(flags, verdict="TIDAK ADA INDIKASI"):
     return DocumentAuthenticity(
         verdict=verdict, confidence_score=0.75, warning_flags=flags, detected_provider="pertamina"
     )
@@ -37,14 +37,14 @@ def test_receipt_photo_flags_become_unverified():
     adjusted = adjust_authenticity_for_subtype(
         _auth(["unknown_provider", "missing_metadata"]), "fuel"
     )
-    assert adjusted.verdict == "TIDAK DIVERIFIKASI"
+    assert adjusted.verdict == "TIDAK DAPAT DIANALISIS"
     assert adjusted.is_suspicious is False
     assert adjusted.warning_flags == []
     assert adjusted.detected_provider == "pertamina"
 
 
 def test_editing_evidence_is_kept_for_toll():
-    original = _auth(["editing_software_detected", "missing_metadata"], verdict="PALSU/DIEDIT")
+    original = _auth(["editing_software_detected", "missing_metadata"], verdict="INDIKASI KUAT")
     assert adjust_authenticity_for_subtype(original, "toll") is original
 
 

@@ -41,14 +41,14 @@ async def test_extract_progress(client):
 
 async def test_extract_success_returns_data(client):
     trx_id = str(uuid.uuid4())
-    result = {"verdict": "AUTENTIK", "total_payment": 1500000.0, "summary": "Test OK"}
+    result = {"verdict": "TIDAK ADA INDIKASI", "total_payment": 1500000.0, "summary": "Test OK"}
     await _insert_job(trx_id, "success", result=result)
 
     resp = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "success"
-    assert data["data"]["verdict"] == "AUTENTIK"
+    assert data["data"]["verdict"] == "TIDAK ADA INDIKASI"
     assert data["data"]["total_payment"] == 1500000.0
 
 

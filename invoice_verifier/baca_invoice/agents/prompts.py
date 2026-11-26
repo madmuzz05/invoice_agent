@@ -200,7 +200,7 @@ dibuang.
 === STEP 4: META ===
 - authenticity: {{"verdict":"-","is_suspicious":false}} (ditimpa post-process).
 - summary: 1–2 kalimat — pihak utama, tanggal/rute/kamar, total_payment.
-  JANGAN sebut verdict/keaslian dokumen (AUTENTIK, PALSU, MENCURIGAKAN, dll.)
+  JANGAN sebut hasil analisis keaslian (indikasi perubahan, asli/palsu, dll.)
   di summary; keaslian hanya ada di field authenticity.
 - extraction_confidence=0.0, requires_manual_review=false, review_reasons=[]
   (dihitung post-process).

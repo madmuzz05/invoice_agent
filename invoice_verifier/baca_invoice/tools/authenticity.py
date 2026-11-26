@@ -3,6 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..models.authenticity import (
+    VERDICT_NO_INDICATION,
+    VERDICT_NOT_ANALYZABLE,
+    VERDICT_STRONG_INDICATION,
+    VERDICT_WEAK_INDICATION,
+)
 from .constants import CONFIDENCE_DEDUCTIONS, KNOWN_PROVIDERS, SOFTWARE_LABELS
 
 
@@ -38,8 +44,8 @@ def _detect_provider(text_lower: str) -> str | None:
 
 def _build_metadata_failure_result(error: str) -> dict[str, Any]:
     return {
-        "verdict": "MENCURIGAKAN",
-        "is_suspicious": True,
+        "verdict": VERDICT_NOT_ANALYZABLE,
+        "is_suspicious": False,
         "confidence_score": 0.0,
         "detected_provider": "-",
         "pdf_creator": "-",
@@ -53,15 +59,36 @@ def _build_metadata_failure_result(error: str) -> dict[str, Any]:
     }
 
 
-def analyze_authenticity(meta: dict, full_text: str) -> dict[str, Any]:
-    """Analisis keaslian dokumen dari metadata PDF + teks isi.
+# Jejak langsung perubahan isi → INDIKASI KUAT.
+_STRONG_EDIT_FLAGS = (
+    "editing_software_detected",
+    "content_changed_after_creation",
+    "hidden_text_under_overlay",
+)
+# Temuan forensik ringan → minimal INDIKASI LEMAH meski skor masih ≥ 0.5.
+_WEAK_EDIT_FLAGS = (
+    "text_covered_by_white_box",
+    "white_patch_behind_amount",
+    "foreign_font_in_amount",
+)
+
+
+def analyze_authenticity(
+    meta: dict, full_text: str, structure: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Analisis keaslian dokumen dari metadata PDF + teks isi + forensik struktur.
 
     Pure function — tidak melakukan I/O. Caller bertanggung jawab membaca PDF
-    (lihat `baca_invoice.tools.pdf.read_pdf`).
+    (lihat `baca_invoice.tools.pdf.read_pdf`) dan forensik struktur
+    (`baca_invoice.tools.pdf_forensics.analyze_pdf_structure`).
 
-    AUTENTIK: creator/producer dari sistem web provider resmi.
-    PALSU/DIEDIT: terdeteksi software pengeditan di metadata.
-    MENCURIGAKAN: dimodifikasi setelah dibuat, atau provider tidak dikenal.
+    Hasil berupa tingkat indikasi, bukan vonis asli/palsu:
+    INDIKASI KUAT: software pengeditan di metadata, isi berubah antar revisi,
+        atau angka lama tertimpa angka baru.
+    INDIKASI LEMAH: skor < 0.5, atau ada temuan forensik ringan (tambalan
+        putih di belakang angka, font angka berbeda, kotak putih).
+    TIDAK ADA INDIKASI: selain itu (flag metadata ringan tetap dilaporkan).
+    TIDAK DAPAT DIANALISIS: metadata gagal dibaca.
     """
     if not meta.get("success"):
         return _build_metadata_failure_result(meta.get("error", "unknown"))
@@ -78,7 +105,7 @@ def analyze_authenticity(meta: dict, full_text: str) -> dict[str, Any]:
     if detected_sw_label:
         warning_flags.append("editing_software_detected")
         fake_evidence.append(
-            f"[BUKTI - SOFTWARE PENGEDITAN] "
+            f"[TEMUAN - SOFTWARE PENGEDITAN] "
             f"Dokumen dibuat/diedit menggunakan {detected_sw_label}. "
             f"Creator: '{meta.get('creator', '-')}', Producer: '{meta.get('producer', '-')}'. "
             f"Dokumen asli dari provider dicetak via sistem web "
@@ -96,7 +123,7 @@ def analyze_authenticity(meta: dict, full_text: str) -> dict[str, Any]:
             if not creator_valid and "editing_software_detected" not in warning_flags:
                 warning_flags.append("metadata_mismatch")
                 fake_evidence.append(
-                    f"[BUKTI - METADATA TIDAK SESUAI PROVIDER] "
+                    f"[TEMUAN - METADATA TIDAK SESUAI PROVIDER] "
                     f"Konten mengklaim dari '{detected_provider}', "
                     f"tapi creator PDF: '{meta.get('creator', '-')}'. "
                     f"Seharusnya mengandung: {', '.join(valid_creators)}."
@@ -109,7 +136,7 @@ def analyze_authenticity(meta: dict, full_text: str) -> dict[str, Any]:
     elif text_lower:
         warning_flags.append("unknown_provider")
         fake_evidence.append(
-            f"[BUKTI - PROVIDER TIDAK DIKENAL] "
+            f"[TEMUAN - PROVIDER TIDAK DIKENAL] "
             f"Tidak ada identitas provider resmi dalam dokumen "
             f"(traveloka, tiket.com, trip.com, airasia, garuda, lion air, KAI). "
             f"Creator: '{meta.get('creator', '-')}', Producer: '{meta.get('producer', '-')}'."
@@ -119,7 +146,7 @@ def analyze_authenticity(meta: dict, full_text: str) -> dict[str, Any]:
     if meta.get("was_modified"):
         warning_flags.append("modified_after_creation")
         fake_evidence.append(
-            f"[BUKTI - DOKUMEN DIMODIFIKASI] "
+            f"[TEMUAN - DOKUMEN DIMODIFIKASI] "
             f"Dibuat: {meta.get('creation_date', '-')}. "
             f"Dimodifikasi: {meta.get('modification_date', '-')}. "
             f"Selisih: {meta.get('modification_gap_days')} hari. "
@@ -130,25 +157,34 @@ def analyze_authenticity(meta: dict, full_text: str) -> dict[str, Any]:
     if not creator and not producer:
         warning_flags.append("missing_metadata")
         fake_evidence.append(
-            "[BUKTI - METADATA DIHAPUS] "
+            "[TEMUAN - METADATA DIHAPUS] "
             "Creator dan producer PDF kosong. "
             "Dokumen asli selalu memiliki metadata lengkap. "
             "Metadata yang hilang mengindikasikan jejak pengeditan sengaja dihapus."
         )
 
+    # 6. Forensik struktur PDF (revisi, kotak putih, teks tertimpa, font asing)
+    if structure:
+        for flag in structure.get("flags", []):
+            if flag not in warning_flags:
+                warning_flags.append(flag)
+        fake_evidence.extend(structure.get("evidence", []))
+
     confidence = round(
         max(0.0, 1.0 - sum(CONFIDENCE_DEDUCTIONS.get(f, 0.0) for f in warning_flags)), 2
     )
-    is_suspicious = confidence < 0.5 or "editing_software_detected" in warning_flags
+    strong_edit = any(f in warning_flags for f in _STRONG_EDIT_FLAGS)
+    weak_edit = any(f in warning_flags for f in _WEAK_EDIT_FLAGS)
+    is_suspicious = confidence < 0.5 or strong_edit or weak_edit
     verdict = (
-        "PALSU/DIEDIT" if "editing_software_detected" in warning_flags
-        else "MENCURIGAKAN" if is_suspicious
-        else "AUTENTIK"
+        VERDICT_STRONG_INDICATION if strong_edit
+        else VERDICT_WEAK_INDICATION if is_suspicious
+        else VERDICT_NO_INDICATION
     )
     analysis_notes = (
         f"Ditemukan {len(fake_evidence)} indikator. "
         + " | ".join(e.split("]")[0].strip("[") for e in fake_evidence)
-        if fake_evidence else "Tidak ditemukan indikator kecurangan."
+        if fake_evidence else "Tidak ditemukan indikasi perubahan dokumen."
     )
 
     return {

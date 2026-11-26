@@ -4,6 +4,7 @@ from typing import Any
 
 from .authenticity import analyze_authenticity
 from .pdf import read_pdf
+from .pdf_forensics import analyze_pdf_structure
 
 
 def analyze_document(file_path: str, page_numbers: list[int] | None = None) -> dict[str, Any]:
@@ -39,5 +40,7 @@ def analyze_document(file_path: str, page_numbers: list[int] | None = None) -> d
         "file_path": file_path,
         "total_pages": content.get("total_pages", 0),
         "full_text": full_text,
-        "authenticity": analyze_authenticity(meta, full_text),
+        "authenticity": analyze_authenticity(
+            meta, full_text, analyze_pdf_structure(file_path)
+        ),
     }
