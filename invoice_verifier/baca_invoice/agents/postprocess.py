@@ -18,6 +18,7 @@ from google.genai import types
 
 from ..models.authenticity import DocumentAuthenticity
 from ..models.travel_document import TravelDocumentResult
+from ..utils.llm_text import answer_text, extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -231,16 +232,15 @@ def postprocess_llm_response(
     if content is None or not content.parts:
         return None
 
-    text_parts = [p for p in content.parts if getattr(p, "text", None)]
-    if not text_parts:
+    # Abaikan part reasoning (thought) dari model seperti GLM; ambil JSON jawaban.
+    payload = extract_json_object(answer_text(content.parts))
+    if payload is None:
+        logger.warning("postprocess: output formatter tidak berisi JSON; skip.")
         return None
-
-    raw_text = text_parts[0].text or ""
     try:
-        payload = json.loads(raw_text)
         result = TravelDocumentResult.model_validate(payload)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("postprocess: gagal parse output formatter (%s); skip.", exc)
+    except ValueError as exc:
+        logger.warning("postprocess: gagal validasi output formatter (%s); skip.", exc)
         return None
 
     auth_override: DocumentAuthenticity | None = None
