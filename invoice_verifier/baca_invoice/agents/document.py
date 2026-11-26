@@ -11,16 +11,27 @@ from google.adk.events import Event, EventActions
 
 from ..models.travel_document import TravelDocumentResult
 from ..tools.authenticity import analyze_authenticity
+from ..tools.boarding_pass import is_obvious_boarding_pass
 from ..tools.combined import analyze_document
 from ..utils.schema_inline import inline_json_schema_refs
-from .postprocess import RAW_AUTHENTICITY_STATE_KEY, postprocess_llm_response
+from .postprocess import (
+    PRECHECK_RESULT_STATE_KEY,
+    RAW_AUTHENTICITY_STATE_KEY,
+    build_boarding_pass_result,
+    postprocess_llm_response,
+    skip_llm_if_prechecked,
+)
 from .prompts import FORMATTER_PROMPT
 from web.config import (
     GEMINI_MODEL,
+    LLM_REASONING_EFFORT,
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OPENAI_MODEL,
 )
+
+# Mode per dokumen: daftar nomor halaman yang diekstrak (lihat agent_runner).
+PAGE_NUMBERS_STATE_KEY = "page_numbers"
 
 # Providers OpenAI-compatible seperti Databricks Foundation Model API menolak
 # JSON schema yang memakai $ref/$defs untuk model nested (error: "Invalid JSON
@@ -52,10 +63,12 @@ def _agent_model():
     model_name = OPENAI_MODEL
     if not model_name.startswith("openai/"):
         model_name = f"openai/{model_name}"
+    extra = {"reasoning_effort": LLM_REASONING_EFFORT} if LLM_REASONING_EFFORT else {}
     return LiteLlm(
         model=model_name,
         api_base=OPENAI_BASE_URL,
         api_key=OPENAI_API_KEY,
+        **extra,
     )
 
 
@@ -92,7 +105,10 @@ class ExtractorAgent(BaseAgent):
                 ),
             }
         else:
-            raw_doc = analyze_document(file_path)
+            # Mode per dokumen: hanya halaman milik dokumen ini (lihat
+            # web.services.agent_runner); default semua halaman.
+            page_numbers = ctx.session.state.get(PAGE_NUMBERS_STATE_KEY) if ctx.session else None
+            raw_doc = analyze_document(file_path, page_numbers or None)
 
         doc_data_payload = {
             "full_text": raw_doc.get("full_text", ""),
@@ -101,13 +117,18 @@ class ExtractorAgent(BaseAgent):
             "tool_error": raw_doc.get("error", ""),
         }
 
-        actions = EventActions(
-            state_delta={
-                "document_data": json.dumps(doc_data_payload, ensure_ascii=False),
-                RAW_AUTHENTICITY_STATE_KEY: raw_doc.get("authenticity", {}),
-            }
-        )
-        yield Event(author=self.name, actions=actions)
+        state_delta = {
+            "document_data": json.dumps(doc_data_payload, ensure_ascii=False),
+            RAW_AUTHENTICITY_STATE_KEY: raw_doc.get("authenticity", {}),
+        }
+        # Pre-check tanpa LLM: boarding pass yang jelas langsung jadi hasil final,
+        # formatter_agent (LLM) dilewati lewat skip_llm_if_prechecked.
+        if raw_doc.get("success") and is_obvious_boarding_pass(raw_doc.get("full_text", "")):
+            state_delta[PRECHECK_RESULT_STATE_KEY] = build_boarding_pass_result(
+                raw_doc.get("authenticity", {})
+            ).model_dump_json()
+
+        yield Event(author=self.name, actions=EventActions(state_delta=state_delta))
 
 
 extractor_agent = ExtractorAgent(
@@ -124,6 +145,7 @@ formatter_agent = LlmAgent(
     ),
     instruction=FORMATTER_PROMPT,
     output_schema=_FORMATTER_OUTPUT_SCHEMA,
+    before_agent_callback=skip_llm_if_prechecked,
     after_model_callback=postprocess_llm_response,
 )
 

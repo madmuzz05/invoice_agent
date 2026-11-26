@@ -14,6 +14,7 @@ class ExtractResponse(BaseModel):
     status: str
     message: str
     data: dict | None = None
+    error_code: str | None = None
 
 
 class V1ErrorResponse(BaseModel):

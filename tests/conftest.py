@@ -22,7 +22,7 @@ _STUB_MODS = [
     "baca_invoice.agent",
     "baca_invoice.agents",
     "baca_invoice.agents.document", "baca_invoice.agents.prompts",
-    "baca_invoice.agents.postprocess",
+    "baca_invoice.agents.postprocess", "baca_invoice.agents.segmenter",
     "baca_invoice.tools", "baca_invoice.tools.constants",
     "baca_invoice.tools.combined", "baca_invoice.tools.authenticity",
     "baca_invoice.tools.pdf",

@@ -3,8 +3,12 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 
-async def _insert_job(trx_id: str, status: str, result=None, error=None, created_at=None):
+
+async def _insert_job(
+    trx_id: str, status: str, result=None, error=None, created_at=None, error_code=None
+):
     """Helper: write a record directly to SQLite for extract tests."""
     import aiosqlite
     from web.db.sqlite import _DB_PATH
@@ -14,9 +18,9 @@ async def _insert_job(trx_id: str, status: str, result=None, error=None, created
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO upload_jobs"
-            " (trx_id, status, filename, created_at, updated_at, result_json, error_message)"
-            " VALUES (?, ?, 'test.pdf', ?, ?, ?, ?)",
-            (trx_id, status, now, now, result_str, error),
+            " (trx_id, status, filename, created_at, updated_at, result_json, error_message,"
+            " error_code) VALUES (?, ?, 'test.pdf', ?, ?, ?, ?, ?)",
+            (trx_id, status, now, now, result_str, error, error_code),
         )
         await db.commit()
 
@@ -53,11 +57,44 @@ async def test_extract_fail_returns_error_message(client):
     await _insert_job(trx_id, "fail", error="Gagal membaca PDF.")
 
     resp = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
-    assert resp.status_code == 200
+    assert resp.status_code == 500
     data = resp.json()
     assert data["status"] == "fail"
+    assert data["error_code"] == "EXTRACTION_FAILED"
     assert "Gagal membaca PDF." in data["message"]
     assert data["data"] is None
+
+
+@pytest.mark.parametrize(
+    ("error_code", "http_status"),
+    [
+        ("INVALID_LLM_OUTPUT", 502),
+        ("LLM_UNAVAILABLE", 502),
+        ("LLM_AUTH_FAILED", 502),
+        ("LLM_RATE_LIMITED", 503),
+        ("JOB_INTERRUPTED", 503),
+        ("LLM_TIMEOUT", 504),
+    ],
+)
+async def test_extract_fail_maps_error_code_to_http_status(client, error_code, http_status):
+    trx_id = str(uuid.uuid4())
+    await _insert_job(trx_id, "fail", error="Gagal.", error_code=error_code)
+
+    resp = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
+    assert resp.status_code == http_status
+    body = resp.json()
+    assert body["status"] == "fail"
+    assert body["error_code"] == error_code
+    assert body["trx_id"] == trx_id
+
+
+async def test_extract_success_without_result_returns_502(client):
+    trx_id = str(uuid.uuid4())
+    await _insert_job(trx_id, "success")
+
+    resp = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
+    assert resp.status_code == 502
+    assert resp.json()["error_code"] == "INVALID_LLM_OUTPUT"
 
 
 # ── Error cases ───────────────────────────────────────────────────────────
@@ -94,8 +131,12 @@ async def test_upload_then_extract_flow(client, pdf_bytes):
     await asyncio.sleep(0.1)
 
     ex = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
-    assert ex.status_code == 200
-    assert ex.json()["status"] in ("progress", "success", "fail")
+    body = ex.json()
+    assert body["status"] in ("progress", "success", "fail")
+    if body["status"] == "fail":
+        assert ex.status_code >= 500
+    else:
+        assert ex.status_code == 200
 
 
 # ── Validation error format ───────────────────────────────────────────────

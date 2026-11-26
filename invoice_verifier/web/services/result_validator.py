@@ -3,9 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from baca_invoice.models.travel_document import TravelDocumentResult
+from baca_invoice.utils.mixed_subtype import (
+    MIXED_SUBTYPE,
+    mixed_review_reason,
+    normalize_detected_subtypes,
+    resolve_subtype,
+)
 
-_DOC_TYPES = {"invoice", "receipt", "unknown"}
-_SUB_TYPES = {"hotel", "flight", "train", "ship", "bus", "others", "unknown"}
+_DOC_TYPES = {"invoice", "receipt", "boarding_pass", "unknown"}
+_SUB_TYPES = {
+    "hotel", "flight", "train", "ship", "bus", "toll", "fuel", "vehicle_rental", "others",
+    "mixed", "unknown",
+}
+_TRANSPORT_SUB_TYPES = {"flight", "train", "ship", "bus", "others"}
 
 _EMPTY_STRINGS = {"", "-", "-  ", "n/a", "none", "null", "tidak ada", "not available"}
 
@@ -83,9 +93,41 @@ def validate_agent_result(result: dict) -> dict:
         result = _mark_unknown_result(result)
     else:
         result["doc_type"] = doc_type
-        result["document_subtype"] = sub_type
+        # Boarding pass selalu dokumen penerbangan.
+        result["document_subtype"] = (
+            "flight"
+            if doc_type == "boarding_pass"
+            else resolve_subtype(sub_type, result.get("detected_subtypes"))
+        )
+
+    if result.get("document_subtype") == MIXED_SUBTYPE:
+        return _mixed_result(result)
+
+    # trip_type (PP / sekali jalan) hanya bermakna untuk tiket transportasi.
+    if result.get("document_subtype") not in _TRANSPORT_SUB_TYPES:
+        result["trip_type"] = "unknown"
+        result["return_date"] = "-"
 
     return TravelDocumentResult.model_validate(result).model_dump()
+
+
+def _mixed_result(result: dict) -> dict:
+    """Dokumen campuran: ekstraksi dihentikan. Semua field data dikosongkan
+    (walau LLM sempat mengisinya); hanya klasifikasi, keaslian & meta yang tersisa."""
+    subtypes = normalize_detected_subtypes(result.get("detected_subtypes"))
+    reason = mixed_review_reason(subtypes)
+    reasons = [r for r in (result.get("review_reasons") or []) if r != reason]
+    summary = result.get("summary")
+    return TravelDocumentResult(
+        doc_type=result["doc_type"],
+        document_subtype=MIXED_SUBTYPE,
+        detected_subtypes=subtypes,
+        authenticity=result.get("authenticity") or {},
+        extraction_confidence=0.0,
+        requires_manual_review=True,
+        review_reasons=[reason, *reasons],
+        summary=summary if _has_value(summary) else reason,
+    ).model_dump()
 
 
 def _normalize_choice(value: Any, allowed: set[str]) -> str:
