@@ -60,9 +60,9 @@ def test_rental_with_hotel_is_mixed():
 
 
 def test_rental_receipt_authenticity_not_verified_without_edit_evidence():
-    auth = DocumentAuthenticity(verdict="MENCURIGAKAN", warning_flags=["unknown_provider"])
+    auth = DocumentAuthenticity(verdict="INDIKASI LEMAH", warning_flags=["unknown_provider"])
     adjusted = adjust_authenticity_for_subtype(auth, "vehicle_rental")
-    assert adjusted.verdict == "TIDAK DIVERIFIKASI"
+    assert adjusted.verdict == "TIDAK DAPAT DIANALISIS"
     assert "sewa kendaraan" in adjusted.analysis_notes
 
 

@@ -237,7 +237,7 @@ def apply_postprocessing(
     authenticity = (
         authenticity_override if authenticity_override is not None else result.authenticity
     )
-    # Struk tol/BBM: flag metadata/provider tidak relevan → TIDAK DIVERIFIKASI.
+    # Struk tol/BBM: flag metadata/provider tidak relevan → TIDAK DAPAT DIANALISIS.
     updates["authenticity"] = adjust_authenticity_for_subtype(
         authenticity, updates["document_subtype"]
     )

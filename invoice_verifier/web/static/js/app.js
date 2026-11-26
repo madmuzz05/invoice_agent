@@ -279,9 +279,9 @@ function renderSummary(r, docType) {
   const verdict = verdictNormalized(auth.verdict);
   const verdictClass = resolveVerdictClass(verdict);
   const verdictEmoji = {
-    'verdict-autentik':     '✓',
-    'verdict-mencurigakan': '⚠',
-    'verdict-palsu':        '✗',
+    'verdict-none':   '✓',
+    'verdict-weak':   '⚠',
+    'verdict-strong': '!',
   }[verdictClass] || '?';
 
   const total = fmt(r.total_payment || 0, r.currency || 'IDR');
@@ -311,7 +311,7 @@ function renderSummary(r, docType) {
       <div class="verdict-left">
         <div class="verdict-icon-wrap">${verdictEmoji}</div>
         <div class="verdict-info">
-          <div class="verdict-label">Hasil Verifikasi — ${docTypeLabel}</div>
+          <div class="verdict-label">Hasil Analisis — ${docTypeLabel}</div>
           <div class="verdict-text">${escHtml(verdict || 'TIDAK DIKETAHUI')}</div>
           ${desc ? `<div class="verdict-desc">${escHtml(desc)}</div>` : ''}
         </div>
@@ -595,9 +595,8 @@ function renderRawDetail(r) {
 function renderAuthenticity(auth) {
   const verdict = verdictNormalized(auth.verdict);
   const isActuallySuspicious = auth.is_suspicious ||
-    verdict.includes('MENCURIGAKAN') ||
-    verdict.includes('PALSU') ||
-    verdict.includes('DIEDIT');
+    verdict === 'INDIKASI LEMAH' ||
+    verdict === 'INDIKASI KUAT';
 
   const score = Math.round((auth.confidence_score ?? 1) * 100);
 
@@ -605,12 +604,16 @@ function renderAuthenticity(auth) {
     ? `<span class="suspicious-yes">⚠ Ya</span>`
     : `<span class="suspicious-no">✓ Tidak</span>`;
 
+  const description = auth.verdict_description && auth.verdict_description !== '-'
+    ? `<p class="verdict-desc">${escHtml(auth.verdict_description)}</p>` : '';
+
   let html = `
     <div class="field-section">
       <div class="field-section-title">Analisis Dokumen</div>
+      ${description}
       <div class="field-grid">
-        ${fieldItem('Verdict', escHtml(verdict || '—'))}
-        ${fieldItem('Mencurigakan', suspiciousHtml, true)}
+        ${fieldItem('Hasil Analisis', escHtml(verdict || '—'))}
+        ${fieldItem('Perlu Dicek', suspiciousHtml, true)}
         ${fieldItem('Confidence Score', `${score}%`)}
         ${fieldItem('Provider Terdeteksi', escHtml(auth.detected_provider || '—'))}
         ${fieldItem('PDF Creator', escHtml(auth.pdf_creator || '—'))}
@@ -642,7 +645,7 @@ function renderAuthenticity(auth) {
       </li>`
     ).join('');
     html += `<div class="field-section">
-      <div class="field-section-title">Bukti Kecurangan</div>
+      <div class="field-section-title">Temuan</div>
       <ul class="evidence-list">${items}</ul>
     </div>`;
   }
@@ -761,18 +764,14 @@ function fieldItem(label, valueHtml, rawHtml = false) {
 
 function verdictNormalized(raw) {
   if (!raw || raw === '-') return '';
-  const v = String(raw).trim().toUpperCase();
-  if (v === 'SUSPICIOUS') return 'MENCURIGAKAN';
-  if (v === 'FAKE' || v === 'EDITED' || v === 'PALSU' || v.includes('DIEDIT')) return 'PALSU/DIEDIT';
-  if (v === 'AUTHENTIC' || v === 'ASLI') return 'AUTENTIK';
-  return v;
+  return String(raw).trim().toUpperCase();
 }
 
+// Tingkat indikasi (bukan vonis): KUAT → merah, LEMAH → kuning, TIDAK ADA → hijau.
 function resolveVerdictClass(verdict) {
-  if (!verdict) return 'verdict-unknown';
-  if (verdict.includes('PALSU') || verdict.includes('DIEDIT')) return 'verdict-palsu';
-  if (verdict.includes('MENCURIGAKAN'))                         return 'verdict-mencurigakan';
-  if (verdict.includes('AUTENTIK'))                             return 'verdict-autentik';
+  if (verdict === 'INDIKASI KUAT')      return 'verdict-strong';
+  if (verdict === 'INDIKASI LEMAH')     return 'verdict-weak';
+  if (verdict === 'TIDAK ADA INDIKASI') return 'verdict-none';
   return 'verdict-unknown';
 }
 

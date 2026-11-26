@@ -186,9 +186,14 @@ Liveness check.
 
 Sub-schema yang muncul di response semua doc_type:
 
+Hasil analisis keaslian berupa **tingkat indikasi**, bukan vonis asli/palsu:
+sistem hanya membaca jejak di metadata dan struktur file, tidak bisa memastikan
+kebenaran isi dokumen.
+
 ```json
 {
-  "verdict": "AUTENTIK",
+  "verdict": "TIDAK ADA INDIKASI",
+  "verdict_description": "Tidak ditemukan indikasi perubahan pada metadata maupun struktur dokumen. Ini bukan jaminan keaslian: dokumen yang dibuat ulang dari awal tidak meninggalkan jejak struktur.",
   "is_suspicious": false,
   "confidence_score": 0.95,
   "detected_provider": "tiket.com",
@@ -199,11 +204,43 @@ Sub-schema yang muncul di response semua doc_type:
   "was_modified": false,
   "warning_flags": [],
   "fake_evidence": [],
-  "analysis_notes": "Tidak ditemukan indikator kecurangan."
+  "analysis_notes": "Tidak ditemukan indikasi perubahan dokumen."
 }
 ```
 
-`verdict` values: `AUTENTIK` | `MENCURIGAKAN` | `PALSU/DIEDIT` | `-`
+| `verdict` | Arti (`verdict_description`) |
+|---|---|
+| `TIDAK ADA INDIKASI` | Tidak ditemukan indikasi perubahan pada metadata maupun struktur. Bukan jaminan keaslian — dokumen yang dibuat ulang dari awal tidak meninggalkan jejak. |
+| `INDIKASI LEMAH` | Ada tanda yang bisa berarti dokumen diubah, tapi juga bisa muncul pada dokumen wajar (metadata tidak sesuai provider, tambalan putih di belakang angka, font angka berbeda). Perlu dicek manual. |
+| `INDIKASI KUAT` | Jejak langsung perubahan isi: software pengedit di metadata, isi berbeda antar revisi file, atau angka lama tertimpa angka baru. Cocokkan dengan dokumen sumber. |
+| `TIDAK DAPAT DIANALISIS` | Tidak bisa dianalisis dari file ini: scan/foto struk kertas, file gagal dibaca, atau dokumen tidak dikenali. |
+| `-` | Belum dianalisis. |
+
+`verdict_description` selalu diisi sistem sesuai `verdict` (tidak dari LLM).
+`fake_evidence` berisi **temuan** yang mendasari tingkat indikasi (bukan bukti
+pemalsuan), mis. *"Revisi awal file berisi 1.062.145, versi akhir berisi 3.062.145"*.
+
+**Parameter analisis** (`warning_flags`, dengan potongan `confidence_score`):
+
+| Flag | Potongan | Sumber | Pengaruh ke `verdict` |
+|---|---|---|---|
+| `editing_software_detected` | 0.55 | Metadata: software pengedit (Acrobat, Word, Photoshop, iLovePDF, …) | INDIKASI KUAT |
+| `content_changed_after_creation` | 0.55 | Struktur: teks halaman berbeda antara revisi awal dan versi akhir file (revisi yang hanya menambah tanda tangan/anotasi tidak dihitung) | INDIKASI KUAT |
+| `hidden_text_under_overlay` | 0.55 | Struktur: dua angka berbeda di posisi yang sama (angka lama tertimpa) | INDIKASI KUAT |
+| `text_covered_by_white_box` | 0.55 | Struktur: kotak putih digambar di atas teks | INDIKASI LEMAH |
+| `white_patch_behind_amount` | 0.30 | Struktur: angka ditulis di atas tambalan putih seukuran angka (jejak alat redact) | INDIKASI LEMAH |
+| `foreign_font_in_amount` | 0.30 | Struktur: angka memakai keluarga font yang tidak dipakai teks lain | INDIKASI LEMAH |
+| `modified_after_creation` | 0.30 | Metadata: tanggal modifikasi > 5 menit setelah dibuat | skor |
+| `metadata_mismatch` | 0.20 | Metadata: pembuat PDF tidak sesuai provider | skor |
+| `unknown_provider` | 0.15 | Isi: provider tidak dikenal | skor |
+| `missing_metadata` | 0.10 | Metadata: creator & producer kosong | skor |
+
+Flag "skor" hanya mengurangi `confidence_score`; bila skor < 0.5 → `INDIKASI LEMAH`.
+Forensik struktur hanya berlaku untuk PDF digital (halaman scan/foto dilewati).
+"Save As" menghapus riwayat revisi, tetapi kotak putih, angka tertimpa, dan font
+asing tetap terdeteksi karena ada di isi halaman. Dokumen yang dibuat ulang dari
+nol (mis. diedit di browser lalu *print to PDF*) tidak meninggalkan jejak
+struktur.
 
 ---
 
@@ -231,8 +268,8 @@ berbeda) **tidak** dianggap campuran.
 tol `toll_gate`, `vehicle_class`; BBM `gas_station_id`, `fuel_type`,
 `fuel_volume_liters`, `fuel_price_per_liter`; keduanya `vehicle_plate`.
 Karena umumnya foto struk kertas, flag metadata/provider diabaikan dan verdict
-keaslian menjadi `"TIDAK DIVERIFIKASI"`, kecuali ada bukti pengeditan
-(software pengedit / modifikasi pasca-cetak) yang tetap dilaporkan.
+menjadi `"TIDAK DAPAT DIANALISIS"`, kecuali ada temuan pengeditan lain yang
+tetap dilaporkan.
 SPBU di rest area tol tetap `fuel`; `toll` hanya untuk struk transaksi tol
 (asal gerbang, golongan, saldo e-toll).
 
@@ -241,8 +278,8 @@ kwitansi sewa mobil (termasuk tulisan tangan), atau invoice rental. Field
 khusus: `vehicle_type`, `vehicle_plate`, `rental_start_date`,
 `rental_end_date` (YYYY-MM-DD), `rental_days`; `merchant_name` = perusahaan
 rental, `payer_name` = pembayar. Seperti struk tol/BBM, flag
-metadata/provider diabaikan (verdict `"TIDAK DIVERIFIKASI"` kecuali ada bukti
-pengeditan). Surat keterangan + kwitansi untuk sewa yang sama dihitung
+metadata/provider diabaikan (verdict `"TIDAK DAPAT DIANALISIS"` kecuali ada
+temuan pengeditan lain). Surat keterangan + kwitansi untuk sewa yang sama dihitung
 **satu** transaksi (tidak dijumlah dua kali).
 
 **Beberapa dokumen sejenis dalam satu file** (hotel, flight, train, ship, bus,
