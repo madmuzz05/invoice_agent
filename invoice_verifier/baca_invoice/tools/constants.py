@@ -77,6 +77,9 @@ SOFTWARE_LABELS: dict[str, str] = {
     "canva": "Canva (aplikasi desain grafis)",
     "inkscape": "Inkscape (editor grafis vektor)",
     "gimp": "GIMP (editor gambar/foto)",
+    "photoshop": "Adobe Photoshop (editor gambar/foto)",
+    "illustrator": "Adobe Illustrator (editor grafis vektor)",
+    "coreldraw": "CorelDRAW (editor grafis vektor)",
     "phantom pdf": "PhantomPDF (software edit PDF)",
     "pdffiller": "PDFfiller (tool online edit PDF)",
     "pdf-xchange": "PDF-XChange Editor (software edit PDF)"

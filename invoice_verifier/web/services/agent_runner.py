@@ -5,20 +5,37 @@ import logging
 import os
 import time
 
+from baca_invoice.agents.document import PAGE_NUMBERS_STATE_KEY, document_agent
+from baca_invoice.agents.postprocess import apply_postprocessing
+from baca_invoice.agents.segmenter import DOCUMENT_PAGES_STATE_KEY, segmenter_agent
+from baca_invoice.models.authenticity import DocumentAuthenticity
+from baca_invoice.models.travel_document import TravelDocumentResult
+from baca_invoice.tools.authenticity import analyze_authenticity
+from baca_invoice.tools.pdf import count_pages, read_pdf, scanned_page_images
+from baca_invoice.utils.merge_documents import merge_document_results
+from baca_invoice.utils.segments import format_pages_for_segmenter, parse_segments
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
-from baca_invoice.agents.document import document_agent
-from web.config import APP_NAME, IS_PRODUCTION, JOB_TTL_SECONDS, MAX_CONCURRENT_JOBS
+from web.config import (
+    APP_NAME,
+    IS_PRODUCTION,
+    JOB_TTL_SECONDS,
+    LLM_MAX_PARALLEL_CALLS,
+    LLM_SEND_PAGE_IMAGES,
+    MAX_CONCURRENT_JOBS,
+)
 from web.services.agent_io import run_agent_for_json
-from web.services.job_errors import classify_error
+from web.services.job_errors import LLM_RATE_LIMITED, classify_error
 from web.services.jobs import Job, JobStatus, cleanup_job_file
 from web.services.result_validator import validate_agent_result
 
 logger = logging.getLogger(__name__)
 
 _EVICTION_INTERVAL_SECONDS = 300
+# Jeda retry (detik) bila endpoint LLM membalas rate limit.
+_RATE_LIMIT_BACKOFF_SECONDS = (5, 15)
 
 
 class AgentRunnerService:
@@ -36,9 +53,16 @@ class AgentRunnerService:
             agent=document_agent,
             session_service=self._session_service,
         )
+        self._segmenter_runner = Runner(
+            app_name=APP_NAME,
+            agent=segmenter_agent,
+            session_service=self._session_service,
+        )
         self._jobs: dict[str, Job] = {}
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+        # Global untuk semua job: total panggilan LLM bersamaan dibatasi.
+        self._llm_slots = asyncio.Semaphore(LLM_MAX_PARALLEL_CALLS)
 
     def create_job(self, job_id: str, file_path: str, filename: str) -> None:
         self._jobs[job_id] = Job(job_id=job_id, filename=filename, file_path=file_path)
@@ -73,25 +97,103 @@ class AgentRunnerService:
                 cleanup_job_file(job)
 
     async def _extract_document(self, job: Job) -> dict:
-        user_id = f"user_{job.job_id}"
-        session_id = f"session_{job.job_id}"
-        await self._session_service.create_session(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=session_id,
-            state={"file_path": job.file_path},
+        """PDF 1 halaman: satu kali ekstraksi. Multi-halaman: halaman dipetakan
+        ke dokumen oleh segmenter, tiap dokumen diekstrak terpisah (paralel),
+        lalu digabung & dijumlahkan di kode supaya transaksi tidak terlewat."""
+        groups = None
+        content: dict = {}
+        if await asyncio.to_thread(count_pages, job.file_path) > 1:
+            content = await asyncio.to_thread(read_pdf, job.file_path)
+            if content.get("success"):
+                groups = await self._segment_pages(job, content["pages"])
+
+        if not groups or len(groups) < 2:
+            return await self._extract_pages(job, None, "all")
+        started = time.monotonic()
+
+        results = await asyncio.gather(
+            *(self._extract_pages(job, pages, f"doc{i}") for i, pages in enumerate(groups))
         )
-        message = genai_types.Content(
-            role="user",
-            parts=[genai_types.Part(text=f"file_path: {job.file_path}")],
+        logger.info(
+            "Job %s: %d dokumen dari halaman %s diekstrak dalam %.1f detik",
+            job.job_id, len(groups), groups, time.monotonic() - started,
         )
-        raw_result = await run_agent_for_json(
-            runner=self._runner,
-            user_id=user_id,
-            session_id=session_id,
-            message=message,
+
+        merged = TravelDocumentResult.model_validate(merge_document_results(list(results)))
+        # Keaslian dinilai dari keseluruhan file (metadata + seluruh teks).
+        authenticity = DocumentAuthenticity.model_validate(
+            analyze_authenticity(content.get("metadata") or {}, content.get("full_text", ""))
+        )
+        final = apply_postprocessing(merged, authenticity_override=authenticity)
+        return validate_agent_result(final.model_dump())
+
+    async def _segment_pages(self, job: Job, pages: list[dict]) -> list[list[int]] | None:
+        page_numbers = [page["page"] for page in pages]
+        started = time.monotonic()
+        try:
+            data = await self._run(
+                self._segmenter_runner,
+                job,
+                "segment",
+                {DOCUMENT_PAGES_STATE_KEY: format_pages_for_segmenter(pages)},
+                "Petakan halaman ke dokumen.",
+            )
+        except Exception:
+            logger.warning("Job %s: segmentasi halaman gagal, ekstraksi sekaligus.", job.job_id)
+            return None
+        groups = parse_segments(data, page_numbers)
+        if groups is None:
+            logger.warning("Job %s: hasil segmentasi tidak valid: %s", job.job_id, data)
+        logger.info("Job %s: segmentasi %.1f detik", job.job_id, time.monotonic() - started)
+        return groups
+
+    async def _extract_pages(self, job: Job, pages: list[int] | None, suffix: str) -> dict:
+        state = {"file_path": job.file_path}
+        if pages:
+            state[PAGE_NUMBERS_STATE_KEY] = pages
+        images = []
+        if LLM_SEND_PAGE_IMAGES:
+            images = await asyncio.to_thread(scanned_page_images, job.file_path, pages)
+        raw_result = await self._run(
+            self._runner, job, suffix, state, f"file_path: {job.file_path}", images
         )
         return validate_agent_result(raw_result)
+
+    async def _run(
+        self,
+        runner: Runner,
+        job: Job,
+        suffix: str,
+        state: dict,
+        text: str,
+        images: list[tuple[str, bytes]] | None = None,
+    ) -> dict:
+        user_id = f"user_{job.job_id}"
+        parts = [genai_types.Part(text=text)]
+        for label, jpeg in images or []:
+            parts.append(genai_types.Part(text=label))
+            parts.append(genai_types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"))
+        message = genai_types.Content(role="user", parts=parts)
+        for attempt in range(len(_RATE_LIMIT_BACKOFF_SECONDS) + 1):
+            session_id = f"session_{job.job_id}_{suffix}_{attempt}"
+            await self._session_service.create_session(
+                app_name=APP_NAME, user_id=user_id, session_id=session_id, state=dict(state)
+            )
+            try:
+                async with self._llm_slots:
+                    return await run_agent_for_json(
+                        runner=runner, user_id=user_id, session_id=session_id, message=message
+                    )
+            except Exception as exc:
+                if (
+                    classify_error(exc) != LLM_RATE_LIMITED
+                    or attempt == len(_RATE_LIMIT_BACKOFF_SECONDS)
+                ):
+                    raise
+                delay = _RATE_LIMIT_BACKOFF_SECONDS[attempt]
+                logger.warning("Job %s: rate limit LLM, ulangi dalam %d detik.", job.job_id, delay)
+                await asyncio.sleep(delay)
+        raise RuntimeError("unreachable")
 
     async def eviction_loop(self) -> None:
         while True:

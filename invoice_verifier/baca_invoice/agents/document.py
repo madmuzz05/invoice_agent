@@ -24,10 +24,14 @@ from .postprocess import (
 from .prompts import FORMATTER_PROMPT
 from web.config import (
     GEMINI_MODEL,
+    LLM_REASONING_EFFORT,
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OPENAI_MODEL,
 )
+
+# Mode per dokumen: daftar nomor halaman yang diekstrak (lihat agent_runner).
+PAGE_NUMBERS_STATE_KEY = "page_numbers"
 
 # Providers OpenAI-compatible seperti Databricks Foundation Model API menolak
 # JSON schema yang memakai $ref/$defs untuk model nested (error: "Invalid JSON
@@ -59,10 +63,12 @@ def _agent_model():
     model_name = OPENAI_MODEL
     if not model_name.startswith("openai/"):
         model_name = f"openai/{model_name}"
+    extra = {"reasoning_effort": LLM_REASONING_EFFORT} if LLM_REASONING_EFFORT else {}
     return LiteLlm(
         model=model_name,
         api_base=OPENAI_BASE_URL,
         api_key=OPENAI_API_KEY,
+        **extra,
     )
 
 
@@ -99,7 +105,10 @@ class ExtractorAgent(BaseAgent):
                 ),
             }
         else:
-            raw_doc = analyze_document(file_path)
+            # Mode per dokumen: hanya halaman milik dokumen ini (lihat
+            # web.services.agent_runner); default semua halaman.
+            page_numbers = ctx.session.state.get(PAGE_NUMBERS_STATE_KEY) if ctx.session else None
+            raw_doc = analyze_document(file_path, page_numbers or None)
 
         doc_data_payload = {
             "full_text": raw_doc.get("full_text", ""),

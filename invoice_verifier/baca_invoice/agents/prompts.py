@@ -27,6 +27,19 @@ Anda adalah agent klasifikasi & ekstraksi dokumen perjalanan dinas.
 DATA SUMBER:
 {document_data}
 JSON: full_text, authenticity, tool_success, tool_error.
+full_text berisi SEMUA halaman dokumen (penanda `=== HALAMAN n ===`). Baca
+seluruh halaman; data penting (total, tanggal pulang, rincian) bisa ada di
+halaman mana pun, termasuk halaman terakhir.
+Halaman hasil scan/foto juga dilampirkan sebagai GAMBAR di pesan user
+("Gambar HALAMAN n"). Untuk halaman itu, GAMBAR adalah sumber utama: teks OCR
+sering salah baca/kolom bercampur. Nominal, tanggal, dan nomor WAJIB dibaca
+dari GAMBAR; jika angka di teks OCR berbeda dengan gambar (mis. OCR "228000",
+gambar "228500"), PAKAI angka di gambar. Satu foto bisa berisi beberapa struk;
+baca SETIAP struk di gambar, termasuk yang miring/diputar 90°. Struk yang
+diputar juga dilampirkan ulang dalam posisi TEGAK ("sudah ditegakkan") dan
+teks OCR-nya di bagian "--- area diputar 90° ---": pakai versi tegak itu untuk
+membaca nilainya, tapi itu struk yang SAMA (jangan dihitung dua kali). Penanda "--- area n ---" = bagian halaman hasil
+deteksi otomatis (sering satu struk per area), BUKAN jaminan dokumen terpisah.
 
 === STEP 1: TOOL GAGAL ===
 Jika tool_success=false → semua field default, doc_type="unknown",
@@ -73,6 +86,55 @@ OVERRIDE KHUSUS:
 - Kata "payment, pajak, PPN, VAT, subtotal, total, biaya" sendirian = lemah,
   tidak menentukan.
 
+=== STEP 2E: DAFTAR SUBTYPE (detected_subtypes) ===
+Isi detected_subtypes dengan semua NAMA subtype konkret BERBEDA yang punya
+transaksi/tiket di dokumen: hotel, flight, train, ship, bus, toll, fuel,
+vehicle_rental.
+- Beberapa dokumen TERPISAH dengan subtype SAMA tetap SATU subtype: 2 booking
+  hotel berbeda → ["hotel"]; tiket pesawat dari booking/maskapai berbeda →
+  ["flight"]; PP, transit, e-ticket + boarding pass, beberapa tiket kereta,
+  beberapa struk tol/BBM → satu subtype. BUKAN campuran.
+- Campuran HANYA jika nama subtype-nya berbeda (mis. hotel + flight, paket
+  "Pesawat + Hotel", kereta + bus, tol + BBM tanpa sewa kendaraan).
+- PAKET KENDARAAN: sewa kendaraan + struk tol dan/atau BBM (perjalanan dengan
+  mobil sewaan) BUKAN campuran → document_subtype="vehicle_rental",
+  detected_subtypes tetap daftar semua (mis. ["vehicle_rental","toll","fuel"]).
+  items_purchased = SATU baris per transaksi (kwitansi sewa, tiap struk tol,
+  tiap struk BBM) dengan nominal masing-masing; total_payment = jumlah semua.
+  Deskripsi item struk tol/BBM WAJIB memuat nomor uniknya ("Seri 123456",
+  "No. Trans 7654321"). Satu struk tol = satu "Seri"; nama di bawah logo
+  (mis. PASTEUR) adalah gerbangnya, "Asal Gerbang" = gerbang masuk pada struk
+  yang SAMA, BUKAN struk lain.
+  Detail sewa dari kwitansi sewa; toll_gate/fuel_type dari struknya.
+- Subtype ditentukan dari JENIS TRANSAKSI tiap struk, bukan dari kata lokasi.
+  toll HANYA jika ada struk dengan penanda transaksi tol: "Asal Gerbang",
+  "Gerbang", "Gol"/golongan kendaraan, "Sisa Saldo", kartu e-Toll/e-money,
+  tarif tol. Kata "TOL/TOLL" sebagai alamat SPBU (mis. "SPBU KM 379A TOL
+  TRANS JAWA", rest area) BUKAN struk tol: struk SPBU (produk BBM, liter,
+  pompa, harga/liter) = fuel. Contoh: 2 struk SPBU, salah satunya di rest
+  area tol → detected_subtypes=["fuel"].
+- document_subtype = subtype dokumen pertama (JANGAN isi "mixed"; sistem
+  yang menentukan campuran dari detected_subtypes). Selalu lanjut STEP 3.
+- Indikasi palsu/edit (authenticity) TIDAK menghentikan ekstraksi: tetap
+  ekstrak semua field seperti dokumen biasa.
+
+=== STEP 2F: HITUNG DOKUMEN/TRANSAKSI (WAJIB sebelum ekstraksi) ===
+Telusuri SETIAP blok "=== HALAMAN n ===" dari awal sampai akhir dan buat
+daftar transaksi terpisah. Satu transaksi = satu bukti bayar/tagihan dengan
+nomor (receipt/invoice/folio/pesanan) atau nominal total sendiri.
+- Hotel yang SAMA dengan tanggal menginap/nomor/nominal BERBEDA = transaksi
+  BERBEDA (mis. booking OTA 16–17 Nov + folio/invoice hotel 17–19 Nov).
+- Folio/invoice langsung dari hotel (Invoice No, Room Charges, Total) juga
+  transaksi, walau formatnya beda dengan receipt OTA dan hasil scan/OCR.
+- Satu transaksi bisa lebih dari 1 halaman (lanjutan, syarat & ketentuan);
+  halaman dengan nomor yang SAMA = transaksi yang sama, hitung sekali.
+- Dokumen PENDUKUNG untuk transaksi yang sama (surat keterangan/pernyataan,
+  memo, persetujuan + kwitansi/bukti bayarnya; nominal, tanggal, kendaraan/
+  plat sama) = SATU transaksi, hitung sekali, JANGAN dijumlah dua kali.
+document_count = jumlah transaksi di daftar; SEMUA transaksi wajib masuk
+items_purchased/line_items (lihat BEBERAPA DOKUMEN SEJENIS), jangan ada yang
+dibuang.
+
 === STEP 3: EKSTRAKSI ===
 - COMMON selalu diisi: subtotal, discount, tax, service_fee, total_payment,
   payment_method, payment_date_time, currency, provider*.
@@ -90,15 +152,39 @@ OVERRIDE KHUSUS:
   ticket_price, addons).
 - subtype=toll (struk tol: Jasa Marga/gerbang tol/e-toll/golongan) → blok TOL
   (toll_gate, vehicle_class, vehicle_plate jika ada); merchant_name = operator
-  tol; payment_method = kartu/e-money; tarif ke total_payment.
+  tol; payment_method = kartu/e-money; tarif ke total_payment. Tarif = angka
+  di baris kartu (mis. "GOL-I e-Toll BCA Rp27000"), BUKAN sisa saldo
+  ("Sisa Saldo"/angka setelah nomor kartu CN).
 - subtype=fuel (struk SPBU/BBM: Pertamina/Shell/BP/Vivo, nama produk BBM,
   liter) → blok BBM (gas_station_id, fuel_type, fuel_volume_liters,
-  fuel_price_per_liter, vehicle_plate); merchant_name = nama SPBU.
+  fuel_price_per_liter, vehicle_plate); merchant_name = nama SPBU. Nominal
+  struk = "Dibayar Konsumen"/"Total Harga", BUKAN uang tunai yang diserahkan
+  (CASH) bila ada kembalian (CHANGE).
+- BEBERAPA DOKUMEN SEJENIS dalam satu file (mis. 2 booking hotel berbeda,
+  beberapa tiket pesawat/kereta/kapal/bus, 4 struk tol, 2 struk SPBU):
+  JUMLAHKAN SEMUA. document_count = jumlah dokumen/struk terpisah (1 jika
+  hanya satu). Daftar item = SATU baris per dokumen: receipt →
+  items_purchased (description = tanggal + nama hotel/rute/gerbang/SPBU +
+  produk, quantity = liter untuk BBM, selain itu 1, price = total dibayar di
+  dokumen itu); invoice → line_items (quantity 1, unit_price = subtotal =
+  total dokumen itu). total_payment = jumlah total semua dokumen.
+  receipt_number/invoice_number/order_id = semua nomor dipisah ", ".
+  fuel_volume_liters = total liter; fuel_price_per_liter = harga/liter jika
+  sama, selain itu 0. Field detail lain (hotel, rute, tanggal, gerbang, SPBU,
+  merchant) dari dokumen pertama; trip_type tetap mengikuti semua segmen.
+  summary sebut jumlah dokumen dan total keseluruhan.
 - subtype=train, ship, bus, atau others → gunakan field COMMON dan isi field
   yang relevan dari dokumen; field khusus hotel/flight yang tidak relevan tetap
   memakai nilai default schema.
+- subtype=vehicle_rental (sewa kendaraan/mobil/rental: surat keterangan sewa
+  kendaraan, kwitansi sewa mobil, invoice rental; ciri: jenis kendaraan, plat,
+  periode/lama sewa) → blok SEWA (vehicle_type mis. "Toyota Rush",
+  vehicle_plate, rental_start_date, rental_end_date YYYY-MM-DD, rental_days);
+  merchant_name = perusahaan rental/penerima uang (dari kwitansi/cap);
+  payer_name = pembayar ("Telah terima dari"); total_payment = nilai sewa.
+  Kwitansi tulisan tangan berlaku sebagai bukti bayar → doc_type="receipt".
 - Nilai document_subtype yang valid: hotel, flight, train, ship, bus, toll,
-  fuel, others, atau unknown.
+  fuel, vehicle_rental, others, atau unknown.
 - trip_type (tiket transportasi flight/train/ship/bus/others; selain itu
   "unknown"):
   * "round_trip" (PP): ada label "pulang pergi|PP|round trip|return|pergi &
@@ -113,7 +199,9 @@ OVERRIDE KHUSUS:
 
 === STEP 4: META ===
 - authenticity: {{"verdict":"-","is_suspicious":false}} (ditimpa post-process).
-- summary: 1–2 kalimat — pihak utama, tanggal/rute/kamar, total_payment, verdict.
+- summary: 1–2 kalimat — pihak utama, tanggal/rute/kamar, total_payment.
+  JANGAN sebut verdict/keaslian dokumen (AUTENTIK, PALSU, MENCURIGAKAN, dll.)
+  di summary; keaslian hanya ada di field authenticity.
 - extraction_confidence=0.0, requires_manual_review=false, review_reasons=[]
   (dihitung post-process).
 
@@ -123,4 +211,29 @@ Angka (IDR): "." = ribuan, "," = desimal. "Rp/IDR" prefix diabaikan.
 Tanggal → ISO YYYY-MM-DD. Jam dipisah ke *_time. Tahun tak terbaca → "-".
 
 OUTPUT: HANYA JSON valid TravelDocumentResult. Tidak ada markdown/teks lain.
+"""
+
+
+SEGMENTER_PROMPT = """
+Anda memetakan halaman PDF perjalanan dinas ke dokumen/transaksi terpisah.
+
+HALAMAN:
+{document_pages}
+
+ATURAN:
+- Satu dokumen = satu bukti bayar/tagihan/tiket/struk dengan nomor sendiri
+  (receipt/invoice/folio/pesanan/booking/struk) atau total pembayaran sendiri.
+- Halaman lanjutan dokumen yang sama (nomor sama, rincian/total lanjutan,
+  syarat & ketentuan, boarding pass untuk penerbangan yang sama) masuk ke
+  dokumen tersebut.
+- Hotel/maskapai/SPBU SAMA tetapi nomor, tanggal, atau nominal BERBEDA =
+  dokumen BERBEDA (mis. booking OTA 16-17 Nov + folio hotel 17-19 Nov).
+- Folio/invoice langsung dari hotel dan halaman hasil scan/OCR tetap dokumen.
+- Dokumen PENDUKUNG untuk transaksi yang sama (surat keterangan/pernyataan,
+  persetujuan + kwitansi/bukti bayarnya; nominal, tanggal, kendaraan sama)
+  masuk ke SATU dokumen yang sama.
+- Setiap halaman masuk TEPAT SATU dokumen.
+
+Balas HANYA JSON tanpa teks lain:
+{{"documents": [{{"pages": [1, 2]}}, {{"pages": [3]}}]}}
 """

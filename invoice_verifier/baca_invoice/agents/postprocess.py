@@ -19,7 +19,11 @@ from google.genai import types
 from ..models.authenticity import DocumentAuthenticity
 from ..models.travel_document import TravelDocumentResult
 from ..utils.llm_text import answer_text, extract_json_object
+from ..utils.mixed_subtype import MIXED_SUBTYPE, mixed_review_reason, resolve_subtype
+from ..utils.multi_receipt import sum_multi_receipts
 from ..utils.receipt_authenticity import adjust_authenticity_for_subtype
+from ..utils.toll_check import REVIEW_REASON as TOLL_REVIEW_REASON
+from ..utils.toll_check import check_toll_amounts, needs_toll_review
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +106,8 @@ _TOLL_FIELDS: tuple[str, ...] = ("toll_gate", "vehicle_class")
 
 _FUEL_FIELDS: tuple[str, ...] = ("gas_station_id", "fuel_type", "fuel_volume_liters")
 
+_RENTAL_FIELDS: tuple[str, ...] = ("vehicle_type", "rental_start_date", "rental_days")
+
 _CRITICAL_FIELDS: tuple[str, ...] = ("total_payment", "payment_date_time")
 
 
@@ -132,12 +138,14 @@ def _relevant_fields(result: TravelDocumentResult) -> tuple[str, ...]:
         fields.extend(_TOLL_FIELDS)
     elif result.document_subtype == "fuel":
         fields.extend(_FUEL_FIELDS)
+    elif result.document_subtype == "vehicle_rental":
+        fields.extend(_RENTAL_FIELDS)
     return tuple(dict.fromkeys(fields))
 
 
 def compute_confidence(result: TravelDocumentResult) -> float:
     """Hitung confidence dari rasio field relevan yang terisi."""
-    if result.doc_type in _NON_TRANSACTION_DOC_TYPES:
+    if result.doc_type in _NON_TRANSACTION_DOC_TYPES or result.document_subtype == MIXED_SUBTYPE:
         return 0.0
     fields = _relevant_fields(result)
     if not fields:
@@ -160,11 +168,17 @@ def compute_review_flags(result: TravelDocumentResult) -> tuple[bool, list[str]]
         reasons.append("doc_type unknown")
     if result.doc_type == "boarding_pass":
         reasons.append(REVIEW_REASON_BOARDING)
+    if result.document_subtype == MIXED_SUBTYPE:
+        reasons.append(mixed_review_reason(result.detected_subtypes))
+    if needs_toll_review(result):
+        reasons.append(TOLL_REVIEW_REASON)
     if getattr(result.authenticity, "is_suspicious", False):
         reasons.append("authenticity suspicious")
     if result.total_payment > LARGE_PAYMENT_THRESHOLD:
         reasons.append(f"total_payment > {LARGE_PAYMENT_THRESHOLD:,}")
-    if result.doc_type not in _NON_TRANSACTION_DOC_TYPES:
+    if result.doc_type not in _NON_TRANSACTION_DOC_TYPES and (
+        result.document_subtype != MIXED_SUBTYPE
+    ):
         missing = [f for f in _CRITICAL_FIELDS if not _is_filled(getattr(result, f, None))]
         if missing:
             reasons.append(f"field penting tidak terbaca: {', '.join(missing)}")
@@ -217,15 +231,21 @@ def apply_postprocessing(
     """
     updates: dict[str, Any] = {
         "currency": _normalize_currency(result.currency),
+        # "mixed" hanya bila ada ≥2 subtype berbeda (diputuskan kode, bukan LLM).
+        "document_subtype": resolve_subtype(result.document_subtype, result.detected_subtypes),
     }
     authenticity = (
         authenticity_override if authenticity_override is not None else result.authenticity
     )
     # Struk tol/BBM: flag metadata/provider tidak relevan → TIDAK DIVERIFIKASI.
     updates["authenticity"] = adjust_authenticity_for_subtype(
-        authenticity, result.document_subtype
+        authenticity, updates["document_subtype"]
     )
     intermediate = result.model_copy(update=updates)
+    # Beberapa dokumen sejenis dalam satu file → total = jumlah semua dokumen.
+    multi = sum_multi_receipts(intermediate)
+    if multi:
+        intermediate = intermediate.model_copy(update=multi)
 
     confidence = compute_confidence(intermediate)
     requires_review, reasons = compute_review_flags(intermediate)
@@ -236,6 +256,16 @@ def apply_postprocessing(
             "review_reasons": reasons,
         }
     )
+
+
+def _full_text_from_state(state: Any) -> str:
+    payload = state.get(EXTRACTOR_STATE_KEY)
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return ""
+    return str(payload.get("full_text") or "") if isinstance(payload, dict) else ""
 
 
 def postprocess_llm_response(
@@ -267,6 +297,13 @@ def postprocess_llm_response(
     auth_override: DocumentAuthenticity | None = None
     state = getattr(callback_context, "state", None)
     if state is not None:
+        try:
+            # Nominal struk tol vs sisa saldo kartu, dicek dari teks OCR.
+            toll_fix = check_toll_amounts(result, _full_text_from_state(state))
+            if toll_fix:
+                result = result.model_copy(update=toll_fix)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("postprocess: cek nominal tol gagal (%s).", exc)
         try:
             raw_auth = state.get(RAW_AUTHENTICITY_STATE_KEY)
             if isinstance(raw_auth, dict):

@@ -54,6 +54,8 @@ tmp_uploads/
 
 # SQLite database (runtime)
 data/
+# ...kecuali fixture tes (snapshot kontrak tipe response)
+!tests/unit/data/
 
 # Code review artifacts
 .full-review/

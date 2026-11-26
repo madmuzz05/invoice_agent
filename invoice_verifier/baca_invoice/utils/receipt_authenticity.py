@@ -1,4 +1,4 @@
-"""Penyesuaian analisis keaslian untuk struk tol & BBM.
+"""Penyesuaian analisis keaslian untuk struk tol, BBM & kwitansi sewa kendaraan.
 
 Analisis keaslian berbasis metadata PDF (creator/producer, provider OTA)
 dirancang untuk e-ticket/invoice digital. Struk tol & SPBU umumnya foto struk
@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from ..models.authenticity import DocumentAuthenticity
 
-RECEIPT_ONLY_SUBTYPES = ("toll", "fuel")
+RECEIPT_ONLY_SUBTYPES = ("toll", "fuel", "vehicle_rental")
+_LABELS = {"toll": "tol", "fuel": "BBM", "vehicle_rental": "sewa kendaraan"}
 UNVERIFIED_VERDICT = "TIDAK DIVERIFIKASI"
 
 # Flag yang tidak relevan untuk foto/scan struk kertas.
@@ -35,7 +36,7 @@ def adjust_authenticity_for_subtype(
     if relevant_flags:
         return authenticity
 
-    label = "tol" if document_subtype == "toll" else "BBM"
+    label = _LABELS[document_subtype]
     return authenticity.model_copy(
         update={
             "verdict": UNVERIFIED_VERDICT,
@@ -44,8 +45,8 @@ def adjust_authenticity_for_subtype(
             "warning_flags": [],
             "fake_evidence": [],
             "analysis_notes": (
-                f"Struk {label}: keaslian tidak bisa diverifikasi dari metadata dokumen "
-                "(umumnya foto struk kertas). Tidak ditemukan bukti pengeditan; "
+                f"Struk/kwitansi {label}: keaslian tidak bisa diverifikasi dari metadata "
+                "dokumen (umumnya foto/scan kertas). Tidak ditemukan bukti pengeditan; "
                 "periksa struk secara manual bila diperlukan."
             ),
         }

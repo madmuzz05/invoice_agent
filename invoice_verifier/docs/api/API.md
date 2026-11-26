@@ -213,7 +213,19 @@ Sistem mengklasifikasikan dokumen pada 2 dimensi independen, keduanya dikerjakan
 oleh `document_agent` dalam satu LLM call:
 
 1. **`doc_type`** → `"invoice"` / `"receipt"` / `"boarding_pass"` / `"unknown"` (kategori publik)
-2. **`document_subtype`** → `"hotel"` / `"flight"` / `"train"` / `"ship"` / `"bus"` / `"toll"` / `"fuel"` / `"others"` / `"unknown"`
+2. **`document_subtype`** → `"hotel"` / `"flight"` / `"train"` / `"ship"` / `"bus"` / `"toll"` / `"fuel"` / `"vehicle_rental"` / `"others"` / `"unknown"`
+
+**Dokumen campuran (`mixed`)**: jika satu file berisi >1 subtype berbeda
+(mis. hotel + flight, paket "Pesawat + Hotel", tol + BBM), ekstraksi
+dihentikan. Response tetap `status="success"` (HTTP 200) dengan
+`document_subtype="mixed"`, `detected_subtypes` (mis. `["hotel","flight"]`),
+semua field data default, `extraction_confidence=0.0`,
+`requires_manual_review=true`, dan `review_reasons` meminta unggah terpisah.
+Analisis keaslian tetap disertakan. Status campuran diputuskan oleh sistem
+dari `detected_subtypes` (≥2 subtype **berbeda**), bukan oleh LLM. Satu
+subtype dengan beberapa segmen (PP, transit, e-ticket + boarding pass yang
+sama) atau beberapa dokumen terpisah dengan subtype sama (mis. 2 booking hotel
+berbeda) **tidak** dianggap campuran.
 
 **Struk tol (`toll`) & BBM (`fuel`)** → `doc_type="receipt"` dengan field khusus:
 tol `toll_gate`, `vehicle_class`; BBM `gas_station_id`, `fuel_type`,
@@ -221,6 +233,32 @@ tol `toll_gate`, `vehicle_class`; BBM `gas_station_id`, `fuel_type`,
 Karena umumnya foto struk kertas, flag metadata/provider diabaikan dan verdict
 keaslian menjadi `"TIDAK DIVERIFIKASI"`, kecuali ada bukti pengeditan
 (software pengedit / modifikasi pasca-cetak) yang tetap dilaporkan.
+SPBU di rest area tol tetap `fuel`; `toll` hanya untuk struk transaksi tol
+(asal gerbang, golongan, saldo e-toll).
+
+**Sewa kendaraan (`vehicle_rental`)** → surat keterangan sewa kendaraan,
+kwitansi sewa mobil (termasuk tulisan tangan), atau invoice rental. Field
+khusus: `vehicle_type`, `vehicle_plate`, `rental_start_date`,
+`rental_end_date` (YYYY-MM-DD), `rental_days`; `merchant_name` = perusahaan
+rental, `payer_name` = pembayar. Seperti struk tol/BBM, flag
+metadata/provider diabaikan (verdict `"TIDAK DIVERIFIKASI"` kecuali ada bukti
+pengeditan). Surat keterangan + kwitansi untuk sewa yang sama dihitung
+**satu** transaksi (tidak dijumlah dua kali).
+
+**Beberapa dokumen sejenis dalam satu file** (hotel, flight, train, ship, bus,
+toll, fuel; mis. 2 booking hotel berbeda, beberapa tiket, 4 struk tol): semua
+diekstrak dan dijumlahkan. `document_count` = jumlah dokumen, tiap dokumen
+menjadi satu baris `items_purchased` (receipt) / `line_items` (invoice) dengan
+nominal dokumen itu, `total_payment` = jumlah semua dokumen (dihitung ulang
+oleh sistem), nomor struk/pesanan dipisah koma, dan untuk BBM
+`fuel_volume_liters` = total liter. Field detail lain diambil dari dokumen
+pertama. Indikasi palsu/edit tidak menghentikan ekstraksi; hanya tercatat di
+`authenticity` dan `review_reasons`.
+
+**Pembacaan halaman**: semua halaman PDF dibaca. Halaman hasil scan/foto atau
+yang sebagian besar berupa gambar dibaca dengan OCR (Tesseract, 300 dpi);
+akurasi OCR struk thermal terbatas, angka/tanggal bisa salah baca. PDF
+berpassword ditolak sebagai gagal baca.
 
 **`boarding_pass`**: pas naik pesawat tanpa bukti pembayaran. Selalu
 `document_subtype="flight"`, `extraction_confidence=0.0`,

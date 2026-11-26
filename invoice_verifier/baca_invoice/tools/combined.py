@@ -6,13 +6,14 @@ from .authenticity import analyze_authenticity
 from .pdf import read_pdf
 
 
-def analyze_document(file_path: str) -> dict[str, Any]:
+def analyze_document(file_path: str, page_numbers: list[int] | None = None) -> dict[str, Any]:
     """Ekstrak teks DAN analisis keaslian dokumen (PDF atau gambar) dalam satu panggilan.
 
     File hanya dibaca sekali. Tool ini dipakai langsung oleh `extractor_agent`.
 
     Args:
         file_path: Path absolut ke file lokal (PDF/gambar) yang akan dianalisis.
+        page_numbers: hanya baca halaman ini (mulai 1); None = semua halaman.
 
     Returns:
         dict dengan key: success (bool), full_text (str), total_pages (int),
@@ -20,7 +21,7 @@ def analyze_document(file_path: str) -> dict[str, Any]:
         dll), error (str, opsional). Saat gagal baca dokumen, `full_text=""` dan
         `authenticity` tetap diisi nilai default.
     """
-    content = read_pdf(file_path)
+    content = read_pdf(file_path, page_numbers)
     if not content.get("success"):
         error = content.get("error", "Gagal membaca dokumen")
         return {
