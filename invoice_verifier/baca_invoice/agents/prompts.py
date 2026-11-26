@@ -35,6 +35,16 @@ review_reasons=[tool_error], summary jelaskan kegagalan. Salin authenticity. STO
 
 === STEP 2: doc_type (urutan, berhenti di match pertama) ===
 
+2-0. BOARDING PASS (cek paling awal):
+  Ciri: judul "boarding pass|boarding card|pas naik|kartu naik pesawat" ATAU
+  ≥2 sinyal: boarding time, gate, nomor kursi spesifik (mis. 23A), zone/group,
+  sequence number (SEQ). TANPA bukti pembayaran (total dibayar, payment
+  method, status paid/lunas, nomor e-ticket/invoice/receipt).
+  → doc_type="boarding_pass", document_subtype="flight". STOP: jangan
+  ekstraksi; balas JSON MINIMAL hanya {{"doc_type","document_subtype","summary"}}.
+  E-ticket/itinerary/booking confirmation BUKAN boarding pass. Dokumen gabungan
+  yang memuat bukti pembayaran → lanjut 2A/2B (invoice/receipt).
+
 2A. JUDUL/HEADER (case-insensitive, paling kuat):
   receipt: "bukti pembayaran|bukti bayar|bukti transaksi|kwitansi|struk|
            payment receipt|payment confirmation|e-receipt|official receipt"

@@ -212,10 +212,19 @@ Sub-schema yang muncul di response semua doc_type:
 Sistem mengklasifikasikan dokumen pada 2 dimensi independen, keduanya dikerjakan
 oleh `document_agent` dalam satu LLM call:
 
-1. **`doc_type`** → `"invoice"` / `"receipt"` / `"unknown"` (kategori publik)
-2. **`document_subtype`** → `"hotel"` / `"flight"` / `"unknown"`
+1. **`doc_type`** → `"invoice"` / `"receipt"` / `"boarding_pass"` / `"unknown"` (kategori publik)
+2. **`document_subtype`** → `"hotel"` / `"flight"` / `"train"` / `"ship"` / `"bus"` / `"others"` / `"unknown"`
 
-Field `data.doc_type` di response **selalu** `invoice` / `receipt` / `unknown` —
+**`boarding_pass`**: pas naik pesawat tanpa bukti pembayaran. Selalu
+`document_subtype="flight"`, `extraction_confidence=0.0`,
+`requires_manual_review=true` (bukan bukti transaksi), data tidak diekstraksi,
+analisis keaslian tetap dijalankan. Boarding pass yang jelas (judul "boarding
+pass" + ≥2 sinyal gate/boarding time/seat/sequence/zone, tanpa penanda
+e-ticket/transaksi) dideteksi **tanpa LLM**. Kasus yang ragu tetap
+diklasifikasi oleh LLM. Dokumen gabungan yang memuat bukti pembayaran tetap
+`invoice`/`receipt`.
+
+Field `data.doc_type` di response **selalu** `invoice` / `receipt` / `boarding_pass` / `unknown` —
 tidak pernah `hotel` / `flight`. Subtype dilaporkan di `data.document_subtype`.
 
 ---

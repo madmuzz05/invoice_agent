@@ -26,6 +26,11 @@ LARGE_PAYMENT_THRESHOLD = 10_000_000
 DEFAULT_CURRENCY = "IDR"
 EXTRACTOR_STATE_KEY = "document_data"
 RAW_AUTHENTICITY_STATE_KEY = "raw_authenticity"
+PRECHECK_RESULT_STATE_KEY = "precheck_result"
+REVIEW_REASON_BOARDING = "doc_type boarding_pass: bukan bukti transaksi"
+
+# doc_type tanpa data transaksi → tidak ada field yang diekstrak/dinilai.
+_NON_TRANSACTION_DOC_TYPES = ("unknown", "boarding_pass")
 
 
 def capture_tool_authenticity(
@@ -123,7 +128,7 @@ def _relevant_fields(result: TravelDocumentResult) -> tuple[str, ...]:
 
 def compute_confidence(result: TravelDocumentResult) -> float:
     """Hitung confidence dari rasio field relevan yang terisi."""
-    if result.doc_type == "unknown":
+    if result.doc_type in _NON_TRANSACTION_DOC_TYPES:
         return 0.0
     fields = _relevant_fields(result)
     if not fields:
@@ -144,11 +149,13 @@ def compute_review_flags(result: TravelDocumentResult) -> tuple[bool, list[str]]
     reasons: list[str] = []
     if result.doc_type == "unknown":
         reasons.append("doc_type unknown")
+    if result.doc_type == "boarding_pass":
+        reasons.append(REVIEW_REASON_BOARDING)
     if getattr(result.authenticity, "is_suspicious", False):
         reasons.append("authenticity suspicious")
     if result.total_payment > LARGE_PAYMENT_THRESHOLD:
         reasons.append(f"total_payment > {LARGE_PAYMENT_THRESHOLD:,}")
-    if result.doc_type != "unknown":
+    if result.doc_type not in _NON_TRANSACTION_DOC_TYPES:
         missing = [f for f in _CRITICAL_FIELDS if not _is_filled(getattr(result, f, None))]
         if missing:
             reasons.append(f"field penting tidak terbaca: {', '.join(missing)}")
@@ -260,3 +267,35 @@ def postprocess_llm_response(
     return LlmResponse(
         content=types.Content(role=content.role, parts=[types.Part(text=new_text)])
     )
+
+
+def build_boarding_pass_result(authenticity: dict[str, Any]) -> TravelDocumentResult:
+    """Hasil final untuk boarding pass yang terdeteksi pre-check (tanpa LLM).
+
+    Authenticity tetap memakai hasil analisis rule-based dari extractor.
+    """
+    base = TravelDocumentResult(
+        doc_type="boarding_pass",
+        document_subtype="flight",
+        summary=(
+            "Dokumen terdeteksi sebagai boarding pass (pre-check otomatis, tanpa LLM). "
+            "Boarding pass bukan bukti transaksi; data tidak diekstraksi."
+        ),
+    )
+    try:
+        auth = DocumentAuthenticity.model_validate(authenticity or {})
+    except ValueError as exc:
+        logger.warning("build_boarding_pass_result: authenticity tidak valid (%s).", exc)
+        auth = None
+    return apply_postprocessing(base, authenticity_override=auth)
+
+
+def skip_llm_if_prechecked(callback_context: Any) -> types.Content | None:
+    """ADK before_agent_callback formatter: lewati LLM jika pre-check sudah
+    menghasilkan hasil final (mis. boarding pass). Content yang dikembalikan
+    menjadi final response dan mengakhiri invocation."""
+    state = getattr(callback_context, "state", None)
+    precheck = state.get(PRECHECK_RESULT_STATE_KEY) if state is not None else None
+    if not precheck:
+        return None
+    return types.Content(role="model", parts=[types.Part(text=precheck)])

@@ -289,6 +289,7 @@ function renderSummary(r, docType) {
   const docTypeLabel = {
     invoice: 'INVOICE',
     receipt: 'RECEIPT',
+    boarding_pass: 'BOARDING PASS',
     unknown: 'TIDAK TERKLASIFIKASI',
   }[docType] || docType.toUpperCase();
 

@@ -27,13 +27,14 @@ class AddonItem(BaseModel):
 
 class TravelDocumentResult(BaseModel):
     # === Klasifikasi ===
-    doc_type: Literal["invoice", "receipt", "unknown"] = Field(
+    doc_type: Literal["invoice", "receipt", "boarding_pass", "unknown"] = Field(
         default="unknown",
         description=(
             "Kategori dokumen: 'invoice' (tagihan/faktur dengan invoice_number, "
             "vendor, line item tagihan, payment terms), 'receipt' (bukti bayar "
-            "dengan receipt_number, payment_status paid/lunas, merchant), atau "
-            "'unknown' (dokumen lain di luar kedua kategori)."
+            "dengan receipt_number, payment_status paid/lunas, merchant), "
+            "'boarding_pass' (pas naik pesawat tanpa bukti pembayaran; "
+            "document_subtype='flight'), atau 'unknown' (dokumen lain)."
         ),
     )
     document_subtype: Literal[
