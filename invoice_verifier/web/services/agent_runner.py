@@ -12,6 +12,7 @@ from google.genai import types as genai_types
 from baca_invoice.agents.document import document_agent
 from web.config import APP_NAME, IS_PRODUCTION, JOB_TTL_SECONDS, MAX_CONCURRENT_JOBS
 from web.services.agent_io import run_agent_for_json
+from web.services.job_errors import classify_error
 from web.services.jobs import Job, JobStatus, cleanup_job_file
 from web.services.result_validator import validate_agent_result
 
@@ -67,6 +68,7 @@ class AgentRunnerService:
                 logger.exception("Job %s failed", job_id)
                 job.status = JobStatus.ERROR
                 job.error = _user_facing_error(exc)
+                job.error_code = classify_error(exc)
             finally:
                 cleanup_job_file(job)
 

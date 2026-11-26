@@ -206,14 +206,15 @@ Poll hasil ekstraksi. Ulangi setiap 3–5 detik sampai `status` bukan `progress`
 }
 ```
 
-**Response `200` — gagal**
+**Response `5xx` — gagal** (HTTP status mengikuti `error_code`)
 
 ```json
 {
   "trx_id": "550e8400-...",
   "status": "fail",
-  "message": "Ekstraksi gagal.",
-  "data": null
+  "message": "Terjadi kesalahan saat memproses dokumen.",
+  "data": null,
+  "error_code": "LLM_UNAVAILABLE"
 }
 ```
 
@@ -236,6 +237,13 @@ Poll hasil ekstraksi. Ulangi setiap 3–5 detik sampai `status` bukan `progress`
 | `TRX_EXPIRED` | 410 | `trx_id` sudah > 7 hari |
 | `INTERNAL_ERROR` | 500 | Kesalahan internal server |
 | `UNAUTHORIZED` | 401 | `X-API-Key` salah atau tidak ada |
+| `EXTRACTION_FAILED` | 500 | Job ekstraksi gagal (error umum) |
+| `INVALID_LLM_OUTPUT` | 502 | LLM tidak mengembalikan JSON yang valid |
+| `LLM_UNAVAILABLE` | 502 | Endpoint LLM tidak bisa diakses / error (mis. 404, 5xx) |
+| `LLM_AUTH_FAILED` | 502 | Kredensial LLM ditolak |
+| `LLM_RATE_LIMITED` | 503 | Kuota / rate limit LLM habis |
+| `JOB_INTERRUPTED` | 503 | Proses terputus karena server restart (upload ulang) |
+| `LLM_TIMEOUT` | 504 | LLM tidak merespons tepat waktu |
 
 ---
 

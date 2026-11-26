@@ -137,13 +137,14 @@ Untuk dokumen tidak terklasifikasi, sistem **tidak memanggil AI** — hanya anal
 }
 ```
 
-**Response 200 — Status fail**:
+**Response 5xx — Status fail** (HTTP status mengikuti `error_code`, lihat tabel di bawah):
 ```json
 {
   "trx_id": "...",
   "status": "fail",
-  "message": "Verifikasi gagal: <detail>",
-  "data": null
+  "message": "Terjadi kesalahan saat memproses dokumen.",
+  "data": null,
+  "error_code": "LLM_UNAVAILABLE"
 }
 ```
 
@@ -157,6 +158,13 @@ Untuk dokumen tidak terklasifikasi, sistem **tidak memanggil AI** — hanya anal
 | 404 | `TRX_NOT_FOUND` | trx_id tidak ada di DB |
 | 410 | `TRX_EXPIRED` | trx_id > `PINTER_TRX_TTL_DAYS` (default 7 hari) |
 | 500 | `INTERNAL_ERROR` | Error server |
+| 500 | `EXTRACTION_FAILED` | Job ekstraksi gagal (error umum) |
+| 502 | `INVALID_LLM_OUTPUT` | LLM tidak mengembalikan JSON yang valid |
+| 502 | `LLM_UNAVAILABLE` | Endpoint LLM tidak bisa diakses / error (mis. 404, 5xx) |
+| 502 | `LLM_AUTH_FAILED` | Kredensial LLM ditolak |
+| 503 | `LLM_RATE_LIMITED` | Kuota / rate limit LLM habis |
+| 503 | `JOB_INTERRUPTED` | Proses terputus karena server restart (upload ulang) |
+| 504 | `LLM_TIMEOUT` | LLM tidak merespons tepat waktu |
 
 ---
 
