@@ -6,6 +6,7 @@ from baca_invoice.models.travel_document import TravelDocumentResult
 
 _DOC_TYPES = {"invoice", "receipt", "boarding_pass", "unknown"}
 _SUB_TYPES = {"hotel", "flight", "train", "ship", "bus", "others", "unknown"}
+_TRANSPORT_SUB_TYPES = {"flight", "train", "ship", "bus", "others"}
 
 _EMPTY_STRINGS = {"", "-", "-  ", "n/a", "none", "null", "tidak ada", "not available"}
 
@@ -85,6 +86,11 @@ def validate_agent_result(result: dict) -> dict:
         result["doc_type"] = doc_type
         # Boarding pass selalu dokumen penerbangan.
         result["document_subtype"] = "flight" if doc_type == "boarding_pass" else sub_type
+
+    # trip_type (PP / sekali jalan) hanya bermakna untuk tiket transportasi.
+    if result.get("document_subtype") not in _TRANSPORT_SUB_TYPES:
+        result["trip_type"] = "unknown"
+        result["return_date"] = "-"
 
     return TravelDocumentResult.model_validate(result).model_dump()
 

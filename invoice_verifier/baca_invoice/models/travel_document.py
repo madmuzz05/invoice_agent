@@ -125,6 +125,21 @@ class TravelDocumentResult(BaseModel):
     ticket_price: float = Field(default=0.0, description="Harga tiket dasar.")
     addons: list[AddonItem] = Field(default_factory=list, description="Addon penerbangan (bagasi, meal, dll).")
 
+    # === Jenis perjalanan (tiket transportasi: flight/train/ship/bus/others) ===
+    trip_type: Literal["one_way", "round_trip", "multi_city", "unknown"] = Field(
+        default="unknown",
+        description=(
+            "Jenis perjalanan tiket transportasi: 'one_way' (sekali jalan), "
+            "'round_trip' (pulang-pergi/PP: segmen pergi A→B dan pulang B→A), "
+            "'multi_city' (>2 segmen dengan rute berbeda), atau 'unknown' "
+            "(bukan tiket transportasi / tidak bisa ditentukan)."
+        ),
+    )
+    return_date: str = Field(
+        default="-",
+        description="Tanggal perjalanan pulang (khusus round_trip), format YYYY-MM-DD.",
+    )
+
     # === COMMON (semua dokumen) ===
     subtotal: float = Field(default=0.0, description="Subtotal sebelum diskon/pajak/biaya.")
     discount: float = Field(default=0.0, description="Total diskon.")
@@ -164,6 +179,20 @@ class TravelDocumentResult(BaseModel):
         default="-",
         description="Ringkasan 1-2 kalimat: pihak utama, tanggal/rute/kamar, total, verdict authenticity.",
     )
+
+    @field_validator("trip_type", mode="before")
+    @classmethod
+    def normalize_trip_type(cls, value: Any) -> str:
+        """Petakan variasi jawaban LLM (PP, round trip, sekali jalan, ...) ke enum."""
+        text = str(value or "").strip().lower().replace("-", " ").replace("_", " ")
+        text = " ".join(text.split())
+        if text in {"round trip", "pp", "pulang pergi", "return", "roundtrip"}:
+            return "round_trip"
+        if text in {"one way", "oneway", "sekali jalan", "single", "single trip"}:
+            return "one_way"
+        if text in {"multi city", "multicity", "multi trip", "multi destination"}:
+            return "multi_city"
+        return "unknown"
 
     @field_validator(
         "doc_type",
@@ -219,6 +248,7 @@ class TravelDocumentResult(BaseModel):
         "flight_date",
         "seat_class",
         "passenger_type",
+        "return_date",
         "payment_method",
         "payment_date_time",
         "currency",

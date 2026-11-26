@@ -224,6 +224,13 @@ e-ticket/transaksi) dideteksi **tanpa LLM**. Kasus yang ragu tetap
 diklasifikasi oleh LLM. Dokumen gabungan yang memuat bukti pembayaran tetap
 `invoice`/`receipt`.
 
+**`trip_type`** (tiket transportasi flight/train/ship/bus/others):
+`"one_way"` (sekali jalan) / `"round_trip"` (pulang-pergi/PP) / `"multi_city"` /
+`"unknown"` (bukan tiket transportasi atau tidak bisa ditentukan). Untuk
+`round_trip`, `route_from`/`route_to`/`flight_date` berisi segmen pergi dan
+`return_date` berisi tanggal pulang. Boarding pass selalu `"unknown"` (tidak
+diekstraksi).
+
 Field `data.doc_type` di response **selalu** `invoice` / `receipt` / `boarding_pass` / `unknown` —
 tidak pernah `hotel` / `flight`. Subtype dilaporkan di `data.document_subtype`.
 

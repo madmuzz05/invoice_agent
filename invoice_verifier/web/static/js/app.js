@@ -334,6 +334,14 @@ function renderSummary(r, docType) {
   });
 }
 
+function tripTypeLabel(tripType) {
+  return {
+    one_way:    'Sekali jalan',
+    round_trip: 'Pulang-pergi (PP)',
+    multi_city: 'Multi kota',
+  }[tripType] || '—';
+}
+
 function renderInvoiceDetail(r) {
   if (r.document_subtype === 'hotel') {
     return renderHotelInvoiceDetail(r);
@@ -495,7 +503,9 @@ function renderFlightReceiptDetail(r) {
     ['Detail Penerbangan', {
       'Maskapai':        r.airline,
       'Rute':            `${r.route_from || '—'} → ${r.route_to || '—'}`,
+      'Jenis Perjalanan': tripTypeLabel(r.trip_type),
       'Tanggal Terbang': r.flight_date,
+      'Tanggal Pulang':  r.return_date,
       'Kelas':           r.seat_class,
       'Tipe Penumpang':  r.passenger_type,
     }],

@@ -30,7 +30,7 @@ JSON: full_text, authenticity, tool_success, tool_error.
 
 === STEP 1: TOOL GAGAL ===
 Jika tool_success=false → semua field default, doc_type="unknown",
-document_subtype="unknown", requires_manual_review=true,
+document_subtype="unknown", trip_type="unknown", requires_manual_review=true,
 review_reasons=[tool_error], summary jelaskan kegagalan. Salin authenticity. STOP.
 
 === STEP 2: doc_type (urutan, berhenti di match pertama) ===
@@ -90,6 +90,15 @@ OVERRIDE KHUSUS:
   memakai nilai default schema.
 - Nilai document_subtype yang valid: hotel, flight, train, ship, bus, others,
   atau unknown.
+- trip_type (tiket transportasi flight/train/ship/bus/others; selain itu
+  "unknown"):
+  * "round_trip" (PP): ada label "pulang pergi|PP|round trip|return|pergi &
+    pulang", ATAU 2 segmen dengan rute terbalik (A→B lalu B→A). Isi route_from/
+    route_to/flight_date dari segmen PERGI dan return_date dari segmen PULANG.
+  * "one_way": hanya 1 segmen/arah (termasuk transit/connecting A→X→B yang
+    satu arah), atau label "sekali jalan|one way".
+  * "multi_city": >2 segmen dengan rute tidak saling kembali (A→B, B→C, ...).
+  * "unknown": tidak bisa ditentukan.
 - Field tidak relevan → default schema (string="-", number=0.0, int=0,
   bool=false, list=[]).
 
