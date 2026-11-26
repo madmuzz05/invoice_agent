@@ -4,26 +4,40 @@
 .ruff_cache
 .venv
 .vscode
+.claude
+**/.claude
 
+# Secret: jangan pernah masuk image (env diisi saat runtime / Secret Manager).
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
+invoice_verifier/credentials
+
+# Data lokal: database SQLite (hasil ekstraksi) & file upload.
+data
+invoice_verifier/data
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+input
+tmp_uploads
+invoice_verifier/input
+invoice_verifier/tmp_uploads
 
 __pycache__
+**/__pycache__
 *.py[cod]
 *.pyo
 *.pyd
 
 .adk
+**/.adk
 .full-review
-invoice_verifier/.adk
-invoice_verifier/.claude
-invoice_verifier/credentials
-
-input
-tmp_uploads
-invoice_verifier/input
-invoice_verifier/tmp_uploads
+invoice_verifier/specs
+invoice_verifier/CLAUDE.md
 
 tests
 *.log

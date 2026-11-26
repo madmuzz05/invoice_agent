@@ -9,12 +9,19 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, UploadFile
 from fastapi import File as FastAPIFile
+from fastapi.responses import JSONResponse
 
 from web.config import MAX_UPLOAD_MB, PINTER_TRX_TTL_DAYS, UPLOAD_DIR
 from web.db.sqlite import create_job, get_job, update_job
 from web.dependencies import get_runner_service
 from web.models.v1_upload import ExtractResponse, UploadResponse, V1ApiError
 from web.security import verify_api_key
+from web.services.job_errors import (
+    EXTRACTION_FAILED,
+    INVALID_LLM_OUTPUT,
+    classify_error,
+    http_status_for,
+)
 from web.services.jobs import JobStatus
 from web.services.rate_limit import enforce_upload_rate_limit
 
@@ -94,13 +101,20 @@ async def upload_document(
         "status='progress' artinya masih berjalan. "
         "status='success' artinya data hasil ekstraksi tersedia di field 'data'. "
         "status='fail' artinya ekstraksi gagal. "
+        "status='fail' dikembalikan dengan HTTP status error sesuai error_code: "
+        "500 EXTRACTION_FAILED, 502 INVALID_LLM_OUTPUT/LLM_UNAVAILABLE/LLM_AUTH_FAILED, "
+        "503 LLM_RATE_LIMITED/JOB_INTERRUPTED, 504 LLM_TIMEOUT. "
         f"trx_id kedaluwarsa setelah {PINTER_TRX_TTL_DAYS} hari (error TRX_EXPIRED)."
     ),
+    responses={
+        code: {"model": ExtractResponse, "description": "Ekstraksi gagal (status='fail')"}
+        for code in (500, 502, 503, 504)
+    },
 )
 async def get_extract(
     trx_id: str,
     _auth: None = Depends(verify_api_key),
-) -> ExtractResponse:
+) -> ExtractResponse | JSONResponse:
     try:
         record = await get_job(trx_id)
     except Exception as e:
@@ -113,7 +127,13 @@ async def get_extract(
     if _is_expired(record.get("created_at")):
         raise V1ApiError(410, "Transaction ID sudah kedaluwarsa.", "TRX_EXPIRED")
 
-    return _build_extract_response(trx_id, record)
+    response = _build_extract_response(trx_id, record)
+    if response.status == "fail":
+        return JSONResponse(
+            status_code=http_status_for(response.error_code),
+            content=response.model_dump(),
+        )
+    return response
 
 
 async def _read_validated_file(file: UploadFile) -> bytes:
@@ -180,11 +200,17 @@ async def _run_and_persist(trx_id: str, runner_service) -> None:
         if job and job.status == JobStatus.DONE:
             await update_job(trx_id, status="success", result_json=job.result)
         else:
-            error_msg = (job.error if job else None) or "Verifikasi gagal."
-            await update_job(trx_id, status="fail", error_message=error_msg)
+            await update_job(
+                trx_id,
+                status="fail",
+                error_message=(job.error if job else None) or "Verifikasi gagal.",
+                error_code=(job.error_code if job else None) or EXTRACTION_FAILED,
+            )
     except Exception as exc:
         logger.exception("run_and_persist gagal untuk trx %s", trx_id)
-        await update_job(trx_id, status="fail", error_message=str(exc))
+        await update_job(
+            trx_id, status="fail", error_message=str(exc), error_code=classify_error(exc)
+        )
 
 
 def _build_extract_response(trx_id: str, record: dict) -> ExtractResponse:
@@ -204,6 +230,7 @@ def _build_extract_response(trx_id: str, record: dict) -> ExtractResponse:
             status="fail",
             message=record.get("error_message") or "Ekstraksi gagal.",
             data=None,
+            error_code=record.get("error_code") or EXTRACTION_FAILED,
         )
 
     result_json = record.get("result_json")
@@ -213,6 +240,7 @@ def _build_extract_response(trx_id: str, record: dict) -> ExtractResponse:
             status="fail",
             message="Ekstraksi selesai tanpa hasil valid. Silakan upload ulang dokumen.",
             data=None,
+            error_code=INVALID_LLM_OUTPUT,
         )
 
     return ExtractResponse(

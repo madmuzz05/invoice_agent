@@ -6,7 +6,6 @@ __pycache__/
 # Local environments and secrets
 .env
 *.env
-!*.env_example
 baca_invoice/.env
 credentials/
 

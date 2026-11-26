@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
+from baca_invoice.utils.llm_text import answer_text, extract_json_object
 from google.adk.runners import Runner
 from google.genai import types as genai_types
 
@@ -41,26 +41,20 @@ async def run_agent_for_json(
 
 
 def _extract_text(parts) -> str:
-    return " ".join(part.text for part in parts if part.text)
+    return answer_text(parts)
 
 
 def _parse_json_result(text: str) -> dict:
-    text = text.strip()
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if match:
-        text = match.group(1)
-    else:
-        brace_match = re.search(r"\{.*\}", text, re.DOTALL)
-        if brace_match:
-            text = brace_match.group()
+    parsed = extract_json_object(text)
+    if parsed is not None:
+        return parsed
 
-    text = re.sub(r"\bTrue\b", "true", text)
-    text = re.sub(r"\bFalse\b", "false", text)
-    text = re.sub(r"\bNone\b", "null", text)
-    try:
-        return json.loads(text)
-    except Exception:
-        return {"raw": text}
+    # Fallback: literal Python (True/False/None) yang kadang dipakai LLM.
+    pythonish = re.sub(r"\bTrue\b", "true", text)
+    pythonish = re.sub(r"\bFalse\b", "false", pythonish)
+    pythonish = re.sub(r"\bNone\b", "null", pythonish)
+    parsed = extract_json_object(pythonish)
+    return parsed if parsed is not None else {"raw": text.strip()}
 
 
 def _unwrap_agent_result(data: dict) -> dict:

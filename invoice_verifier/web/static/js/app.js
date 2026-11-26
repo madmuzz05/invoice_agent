@@ -259,7 +259,9 @@ function renderResult(data) {
   const docType = data.doc_type || 'unknown';
   renderSummary(data, docType);
 
-  switch (docType) {
+  if (data.document_subtype === 'mixed') {
+    renderMixedDetail(data);
+  } else switch (docType) {
     case 'invoice': renderInvoiceDetail(data); break;
     case 'receipt': renderReceiptDetail(data); break;
     case 'unknown': renderUnknownDetail(data); break;
@@ -289,6 +291,7 @@ function renderSummary(r, docType) {
   const docTypeLabel = {
     invoice: 'INVOICE',
     receipt: 'RECEIPT',
+    boarding_pass: 'BOARDING PASS',
     unknown: 'TIDAK TERKLASIFIKASI',
   }[docType] || docType.toUpperCase();
 
@@ -315,6 +318,7 @@ function renderSummary(r, docType) {
       </div>
       <div class="verdict-right">
         <div class="verdict-total">${total}</div>
+        ${(r.document_count || 1) > 1 ? `<div class="verdict-meta">Total dari ${r.document_count} dokumen</div>` : ''}
         <div class="verdict-meta">Authentic Level</div>
         <div class="confidence-bar-wrap">
           <div class="confidence-bar-bg">
@@ -331,6 +335,14 @@ function renderSummary(r, docType) {
     if (bar) bar.style.width = `${confidence}%`;
     if (pct) animateCounter(pct, confidence);
   });
+}
+
+function tripTypeLabel(tripType) {
+  return {
+    one_way:    'Sekali jalan',
+    round_trip: 'Pulang-pergi (PP)',
+    multi_city: 'Multi kota',
+  }[tripType] || '—';
 }
 
 function renderInvoiceDetail(r) {
@@ -469,6 +481,33 @@ function renderReceiptDetail(r) {
     }],
   ]);
 
+  if (r.document_subtype === 'toll') {
+    $('tab-detail').innerHTML += sections([['Detail Tol', {
+      'Gerbang Tol':  r.toll_gate,
+      'Golongan':     r.vehicle_class,
+      'Plat Nomor':   r.vehicle_plate,
+    }]]);
+  }
+  if (r.document_subtype === 'fuel') {
+    $('tab-detail').innerHTML += sections([['Detail BBM', {
+      'No. SPBU':        r.gas_station_id,
+      'Jenis BBM':       r.fuel_type,
+      'Volume (liter)':  r.fuel_volume_liters ? String(r.fuel_volume_liters) : '—',
+      'Harga / Liter':   r.fuel_price_per_liter ? fmt(r.fuel_price_per_liter, r.currency) : '—',
+      'Plat Nomor':      r.vehicle_plate,
+    }]]);
+  }
+  if (r.document_subtype === 'vehicle_rental') {
+    $('tab-detail').innerHTML += sections([['Detail Sewa Kendaraan', {
+      'Kendaraan':      r.vehicle_type,
+      'Plat Nomor':     r.vehicle_plate,
+      'Mulai Sewa':     r.rental_start_date,
+      'Selesai Sewa':   r.rental_end_date,
+      'Lama Sewa':      r.rental_days ? `${r.rental_days} hari` : '—',
+      'Penyedia':       r.merchant_name,
+    }]]);
+  }
+
   if (items) {
     $('tab-detail').innerHTML += `
       <div class="field-section">
@@ -494,7 +533,9 @@ function renderFlightReceiptDetail(r) {
     ['Detail Penerbangan', {
       'Maskapai':        r.airline,
       'Rute':            `${r.route_from || '—'} → ${r.route_to || '—'}`,
+      'Jenis Perjalanan': tripTypeLabel(r.trip_type),
       'Tanggal Terbang': r.flight_date,
+      'Tanggal Pulang':  r.return_date,
       'Kelas':           r.seat_class,
       'Tipe Penumpang':  r.passenger_type,
     }],
@@ -511,6 +552,14 @@ function renderFlightReceiptDetail(r) {
       'NPWP':       r.provider_npwp,
     }],
   ]);
+}
+
+function renderMixedDetail(r) {
+  const found = (r.detected_subtypes || []).join(', ') || '—';
+  $('tab-detail').innerHTML = sections([['Dokumen Campuran', {
+    'Subtype ditemukan': found,
+    'Status':            'Ekstraksi dihentikan — unggah tiap dokumen secara terpisah',
+  }]]);
 }
 
 function renderUnknownDetail(r) {

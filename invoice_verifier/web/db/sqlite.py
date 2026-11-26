@@ -8,6 +8,7 @@ from pathlib import Path
 import aiosqlite
 
 from web.config import SQLITE_DB_PATH
+from web.services.job_errors import JOB_INTERRUPTED
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,8 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     result_json   TEXT,
-    error_message TEXT
+    error_message TEXT,
+    error_code    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_upload_jobs_status ON upload_jobs(status);
 """
@@ -31,9 +33,18 @@ async def init_db() -> None:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.executescript(_DDL)
+        await _ensure_columns(db)
         await db.commit()
     logger.info("SQLite DB initialized at %s", _DB_PATH)
     await _recover_stale_jobs()
+
+
+async def _ensure_columns(db) -> None:
+    """Tambah kolom baru pada DB lama (CREATE TABLE IF NOT EXISTS tidak menambahkannya)."""
+    async with db.execute("PRAGMA table_info(upload_jobs)") as cursor:
+        columns = {row[1] for row in await cursor.fetchall()}
+    if "error_code" not in columns:
+        await db.execute("ALTER TABLE upload_jobs ADD COLUMN error_code TEXT")
 
 
 async def _recover_stale_jobs() -> None:
@@ -41,9 +52,9 @@ async def _recover_stale_jobs() -> None:
     now = datetime.now(UTC).isoformat()
     async with aiosqlite.connect(_DB_PATH) as db:
         result = await db.execute(
-            "UPDATE upload_jobs SET status='fail', updated_at=?, error_message=?"
-            " WHERE status='progress'",
-            (now, "Proses terputus akibat server restart."),
+            "UPDATE upload_jobs SET status='fail', updated_at=?, error_message=?,"
+            " error_code=? WHERE status='progress'",
+            (now, "Proses terputus akibat server restart.", JOB_INTERRUPTED),
         )
         await db.commit()
         if result.rowcount:
@@ -65,8 +76,8 @@ async def get_job(trx_id: str) -> dict | None:
     async with aiosqlite.connect(_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT trx_id, status, filename, created_at, updated_at, result_json, error_message"
-            " FROM upload_jobs WHERE trx_id = ?",
+            "SELECT trx_id, status, filename, created_at, updated_at, result_json,"
+            " error_message, error_code FROM upload_jobs WHERE trx_id = ?",
             (trx_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -86,13 +97,14 @@ async def update_job(
     status: str,
     result_json: dict | None = None,
     error_message: str | None = None,
+    error_code: str | None = None,
 ) -> None:
     now = datetime.now(UTC).isoformat()
     result_str = json.dumps(result_json) if result_json is not None else None
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute(
-            "UPDATE upload_jobs SET status=?, updated_at=?, result_json=?, error_message=?"
-            " WHERE trx_id=?",
-            (status, now, result_str, error_message, trx_id),
+            "UPDATE upload_jobs SET status=?, updated_at=?, result_json=?, error_message=?,"
+            " error_code=? WHERE trx_id=?",
+            (status, now, result_str, error_message, error_code, trx_id),
         )
         await db.commit()
