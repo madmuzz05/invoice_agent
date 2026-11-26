@@ -289,6 +289,7 @@ function renderSummary(r, docType) {
   const docTypeLabel = {
     invoice: 'INVOICE',
     receipt: 'RECEIPT',
+    boarding_pass: 'BOARDING PASS',
     unknown: 'TIDAK TERKLASIFIKASI',
   }[docType] || docType.toUpperCase();
 
@@ -331,6 +332,14 @@ function renderSummary(r, docType) {
     if (bar) bar.style.width = `${confidence}%`;
     if (pct) animateCounter(pct, confidence);
   });
+}
+
+function tripTypeLabel(tripType) {
+  return {
+    one_way:    'Sekali jalan',
+    round_trip: 'Pulang-pergi (PP)',
+    multi_city: 'Multi kota',
+  }[tripType] || '—';
 }
 
 function renderInvoiceDetail(r) {
@@ -494,7 +503,9 @@ function renderFlightReceiptDetail(r) {
     ['Detail Penerbangan', {
       'Maskapai':        r.airline,
       'Rute':            `${r.route_from || '—'} → ${r.route_to || '—'}`,
+      'Jenis Perjalanan': tripTypeLabel(r.trip_type),
       'Tanggal Terbang': r.flight_date,
+      'Tanggal Pulang':  r.return_date,
       'Kelas':           r.seat_class,
       'Tipe Penumpang':  r.passenger_type,
     }],

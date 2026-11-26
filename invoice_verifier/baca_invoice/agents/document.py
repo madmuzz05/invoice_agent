@@ -11,9 +11,16 @@ from google.adk.events import Event, EventActions
 
 from ..models.travel_document import TravelDocumentResult
 from ..tools.authenticity import analyze_authenticity
+from ..tools.boarding_pass import is_obvious_boarding_pass
 from ..tools.combined import analyze_document
 from ..utils.schema_inline import inline_json_schema_refs
-from .postprocess import RAW_AUTHENTICITY_STATE_KEY, postprocess_llm_response
+from .postprocess import (
+    PRECHECK_RESULT_STATE_KEY,
+    RAW_AUTHENTICITY_STATE_KEY,
+    build_boarding_pass_result,
+    postprocess_llm_response,
+    skip_llm_if_prechecked,
+)
 from .prompts import FORMATTER_PROMPT
 from web.config import (
     GEMINI_MODEL,
@@ -101,13 +108,18 @@ class ExtractorAgent(BaseAgent):
             "tool_error": raw_doc.get("error", ""),
         }
 
-        actions = EventActions(
-            state_delta={
-                "document_data": json.dumps(doc_data_payload, ensure_ascii=False),
-                RAW_AUTHENTICITY_STATE_KEY: raw_doc.get("authenticity", {}),
-            }
-        )
-        yield Event(author=self.name, actions=actions)
+        state_delta = {
+            "document_data": json.dumps(doc_data_payload, ensure_ascii=False),
+            RAW_AUTHENTICITY_STATE_KEY: raw_doc.get("authenticity", {}),
+        }
+        # Pre-check tanpa LLM: boarding pass yang jelas langsung jadi hasil final,
+        # formatter_agent (LLM) dilewati lewat skip_llm_if_prechecked.
+        if raw_doc.get("success") and is_obvious_boarding_pass(raw_doc.get("full_text", "")):
+            state_delta[PRECHECK_RESULT_STATE_KEY] = build_boarding_pass_result(
+                raw_doc.get("authenticity", {})
+            ).model_dump_json()
+
+        yield Event(author=self.name, actions=EventActions(state_delta=state_delta))
 
 
 extractor_agent = ExtractorAgent(
@@ -124,6 +136,7 @@ formatter_agent = LlmAgent(
     ),
     instruction=FORMATTER_PROMPT,
     output_schema=_FORMATTER_OUTPUT_SCHEMA,
+    before_agent_callback=skip_llm_if_prechecked,
     after_model_callback=postprocess_llm_response,
 )
 
