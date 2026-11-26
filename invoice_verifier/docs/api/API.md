@@ -213,7 +213,14 @@ Sistem mengklasifikasikan dokumen pada 2 dimensi independen, keduanya dikerjakan
 oleh `document_agent` dalam satu LLM call:
 
 1. **`doc_type`** → `"invoice"` / `"receipt"` / `"boarding_pass"` / `"unknown"` (kategori publik)
-2. **`document_subtype`** → `"hotel"` / `"flight"` / `"train"` / `"ship"` / `"bus"` / `"others"` / `"unknown"`
+2. **`document_subtype`** → `"hotel"` / `"flight"` / `"train"` / `"ship"` / `"bus"` / `"toll"` / `"fuel"` / `"others"` / `"unknown"`
+
+**Struk tol (`toll`) & BBM (`fuel`)** → `doc_type="receipt"` dengan field khusus:
+tol `toll_gate`, `vehicle_class`; BBM `gas_station_id`, `fuel_type`,
+`fuel_volume_liters`, `fuel_price_per_liter`; keduanya `vehicle_plate`.
+Karena umumnya foto struk kertas, flag metadata/provider diabaikan dan verdict
+keaslian menjadi `"TIDAK DIVERIFIKASI"`, kecuali ada bukti pengeditan
+(software pengedit / modifikasi pasca-cetak) yang tetap dilaporkan.
 
 **`boarding_pass`**: pas naik pesawat tanpa bukti pembayaran. Selalu
 `document_subtype="flight"`, `extraction_confidence=0.0`,

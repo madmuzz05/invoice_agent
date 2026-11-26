@@ -5,7 +5,7 @@ from typing import Any
 from baca_invoice.models.travel_document import TravelDocumentResult
 
 _DOC_TYPES = {"invoice", "receipt", "boarding_pass", "unknown"}
-_SUB_TYPES = {"hotel", "flight", "train", "ship", "bus", "others", "unknown"}
+_SUB_TYPES = {"hotel", "flight", "train", "ship", "bus", "toll", "fuel", "others", "unknown"}
 _TRANSPORT_SUB_TYPES = {"flight", "train", "ship", "bus", "others"}
 
 _EMPTY_STRINGS = {"", "-", "-  ", "n/a", "none", "null", "tidak ada", "not available"}

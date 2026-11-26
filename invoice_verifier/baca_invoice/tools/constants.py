@@ -43,6 +43,15 @@ KNOWN_PROVIDERS: dict[str, dict] = {
         "keywords": ["kereta api indonesia", "pt kai", "kai.id", "tiket.kai.id"],
         "valid_creators": ["skia", "chrome", "chromium", "webkit", "itext", "pdfium"],
     },
+    # Struk tol & BBM umumnya foto struk kertas: tanpa validasi creator.
+    "jasa_marga": {
+        "keywords": ["jasa marga", "jasamarga"],
+        "valid_creators": [],
+    },
+    "pertamina": {
+        "keywords": ["pertamina", "mypertamina"],
+        "valid_creators": [],
+    },
 }
 
 SOFTWARE_LABELS: dict[str, str] = {

@@ -478,6 +478,23 @@ function renderReceiptDetail(r) {
     }],
   ]);
 
+  if (r.document_subtype === 'toll') {
+    $('tab-detail').innerHTML += sections([['Detail Tol', {
+      'Gerbang Tol':  r.toll_gate,
+      'Golongan':     r.vehicle_class,
+      'Plat Nomor':   r.vehicle_plate,
+    }]]);
+  }
+  if (r.document_subtype === 'fuel') {
+    $('tab-detail').innerHTML += sections([['Detail BBM', {
+      'No. SPBU':        r.gas_station_id,
+      'Jenis BBM':       r.fuel_type,
+      'Volume (liter)':  r.fuel_volume_liters ? String(r.fuel_volume_liters) : '—',
+      'Harga / Liter':   r.fuel_price_per_liter ? fmt(r.fuel_price_per_liter, r.currency) : '—',
+      'Plat Nomor':      r.vehicle_plate,
+    }]]);
+  }
+
   if (items) {
     $('tab-detail').innerHTML += `
       <div class="field-section">

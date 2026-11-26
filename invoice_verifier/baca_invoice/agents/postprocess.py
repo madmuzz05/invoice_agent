@@ -19,6 +19,7 @@ from google.genai import types
 from ..models.authenticity import DocumentAuthenticity
 from ..models.travel_document import TravelDocumentResult
 from ..utils.llm_text import answer_text, extract_json_object
+from ..utils.receipt_authenticity import adjust_authenticity_for_subtype
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,10 @@ _FLIGHT_FIELDS: tuple[str, ...] = (
     "ticket_price",
 )
 
+_TOLL_FIELDS: tuple[str, ...] = ("toll_gate", "vehicle_class")
+
+_FUEL_FIELDS: tuple[str, ...] = ("gas_station_id", "fuel_type", "fuel_volume_liters")
+
 _CRITICAL_FIELDS: tuple[str, ...] = ("total_payment", "payment_date_time")
 
 
@@ -123,6 +128,10 @@ def _relevant_fields(result: TravelDocumentResult) -> tuple[str, ...]:
         fields.extend(_HOTEL_FIELDS)
     elif result.document_subtype == "flight":
         fields.extend(_FLIGHT_FIELDS)
+    elif result.document_subtype == "toll":
+        fields.extend(_TOLL_FIELDS)
+    elif result.document_subtype == "fuel":
+        fields.extend(_FUEL_FIELDS)
     return tuple(dict.fromkeys(fields))
 
 
@@ -209,8 +218,13 @@ def apply_postprocessing(
     updates: dict[str, Any] = {
         "currency": _normalize_currency(result.currency),
     }
-    if authenticity_override is not None:
-        updates["authenticity"] = authenticity_override
+    authenticity = (
+        authenticity_override if authenticity_override is not None else result.authenticity
+    )
+    # Struk tol/BBM: flag metadata/provider tidak relevan → TIDAK DIVERIFIKASI.
+    updates["authenticity"] = adjust_authenticity_for_subtype(
+        authenticity, result.document_subtype
+    )
     intermediate = result.model_copy(update=updates)
 
     confidence = compute_confidence(intermediate)

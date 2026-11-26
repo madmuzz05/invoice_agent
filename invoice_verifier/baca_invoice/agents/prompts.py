@@ -62,6 +62,9 @@ review_reasons=[tool_error], summary jelaskan kegagalan. Salin authenticity. STO
 
 2C. unknown: manual/CV/surat/kontrak/voucher tanpa transaksi finansial.
 
+Struk tol (gerbang tol/e-toll/kartu uang elektronik) dan struk SPBU/BBM yang
+mencatat transaksi terbayar → doc_type="receipt".
+
 OVERRIDE KHUSUS:
 - "Pay at Hotel/Property/Bayar di Hotel" = PAYMENT METHOD OTA, BUKAN unpaid.
 - "Order ID/Booking ID/PNR" BUKAN invoice/receipt number (netral).
@@ -85,11 +88,17 @@ OVERRIDE KHUSUS:
 - subtype=flight → blok FLIGHT (po_number, transaction_status, traveler_*,
   airline, route_from, route_to, flight_date, seat_class, passenger_type,
   ticket_price, addons).
+- subtype=toll (struk tol: Jasa Marga/gerbang tol/e-toll/golongan) → blok TOL
+  (toll_gate, vehicle_class, vehicle_plate jika ada); merchant_name = operator
+  tol; payment_method = kartu/e-money; tarif ke total_payment.
+- subtype=fuel (struk SPBU/BBM: Pertamina/Shell/BP/Vivo, nama produk BBM,
+  liter) → blok BBM (gas_station_id, fuel_type, fuel_volume_liters,
+  fuel_price_per_liter, vehicle_plate); merchant_name = nama SPBU.
 - subtype=train, ship, bus, atau others → gunakan field COMMON dan isi field
   yang relevan dari dokumen; field khusus hotel/flight yang tidak relevan tetap
   memakai nilai default schema.
-- Nilai document_subtype yang valid: hotel, flight, train, ship, bus, others,
-  atau unknown.
+- Nilai document_subtype yang valid: hotel, flight, train, ship, bus, toll,
+  fuel, others, atau unknown.
 - trip_type (tiket transportasi flight/train/ship/bus/others; selain itu
   "unknown"):
   * "round_trip" (PP): ada label "pulang pergi|PP|round trip|return|pergi &

@@ -38,13 +38,14 @@ class TravelDocumentResult(BaseModel):
         ),
     )
     document_subtype: Literal[
-        "hotel", "flight", "train", "ship", "bus", "others", "unknown"
+        "hotel", "flight", "train", "ship", "bus", "toll", "fuel", "others", "unknown"
     ] = Field(
         default="unknown",
         description=(
             "Subtype berdasarkan isi: 'hotel' (penginapan/kamar/check-in), "
             "'flight' (penerbangan/airline/rute), 'train' (kereta), "
-            "'ship' (kapal), 'bus' (bus), 'others' (transportasi atau dokumen "
+            "'ship' (kapal), 'bus' (bus), 'toll' (struk tol/e-toll), "
+            "'fuel' (struk BBM/SPBU), 'others' (transportasi atau dokumen "
             "perjalanan lain), atau 'unknown'. Dievaluasi terpisah dari doc_type "
             "kecuali doc_type='unknown'."
         ),
@@ -139,6 +140,19 @@ class TravelDocumentResult(BaseModel):
         default="-",
         description="Tanggal perjalanan pulang (khusus round_trip), format YYYY-MM-DD.",
     )
+
+    # === Blok TOL (subtype=toll) ===
+    toll_gate: str = Field(default="-", description="Gerbang/ruas tol (mis. 'GT Cikampek Utama').")
+    vehicle_class: str = Field(default="-", description="Golongan kendaraan tol (mis. 'Gol I').")
+
+    # === Blok BBM (subtype=fuel) ===
+    gas_station_id: str = Field(default="-", description="Nomor SPBU (mis. '34.171.05').")
+    fuel_type: str = Field(default="-", description="Jenis BBM (Pertalite, Pertamax, Solar, dll).")
+    fuel_volume_liters: float = Field(default=0.0, description="Volume BBM dalam liter.")
+    fuel_price_per_liter: float = Field(default=0.0, description="Harga BBM per liter.")
+
+    # === Kendaraan (tol/BBM) ===
+    vehicle_plate: str = Field(default="-", description="Nomor polisi kendaraan (mis. 'B 1234 XYZ').")
 
     # === COMMON (semua dokumen) ===
     subtotal: float = Field(default=0.0, description="Subtotal sebelum diskon/pajak/biaya.")
@@ -249,6 +263,11 @@ class TravelDocumentResult(BaseModel):
         "seat_class",
         "passenger_type",
         "return_date",
+        "toll_gate",
+        "vehicle_class",
+        "gas_station_id",
+        "fuel_type",
+        "vehicle_plate",
         "payment_method",
         "payment_date_time",
         "currency",
