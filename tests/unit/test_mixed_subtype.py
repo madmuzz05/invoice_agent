@@ -14,7 +14,7 @@ def test_mixed_document_stops_extraction():
             "total_payment": 5000000,
             "trip_type": "round_trip",
             "summary": "Paket pesawat + hotel.",
-            "authenticity": {"verdict": "AUTENTIK"},
+            "authenticity": {"verdict": "TIDAK ADA INDIKASI"},
         }
     )
     assert result["doc_type"] == "receipt"
@@ -28,7 +28,7 @@ def test_mixed_document_stops_extraction():
     assert result["requires_manual_review"] is True
     assert "hotel, flight" in result["review_reasons"][0]
     assert result["summary"] == "Paket pesawat + hotel."
-    assert result["authenticity"]["verdict"] == "AUTENTIK"
+    assert result["authenticity"]["verdict"] == "TIDAK ADA INDIKASI"
 
 
 def test_detected_subtypes_accepts_comma_string():

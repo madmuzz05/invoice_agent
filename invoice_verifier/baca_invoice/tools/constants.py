@@ -8,6 +8,7 @@ KNOWN_PROVIDERS: dict[str, dict] = {
             "webkit",
             "wkhtmltopdf",
             "itext",
+            "openpdf",  # library Java turunan iText (server-side)
             "pdfium",
         ],
     },
@@ -19,29 +20,30 @@ KNOWN_PROVIDERS: dict[str, dict] = {
             "chromium",
             "webkit",
             "itext",
+            "openpdf",
             "wkhtmltopdf",
             "pdfium",
         ],
     },
     "trip.com": {
         "keywords": ["trip.com", "ctrip", "www.trip.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "itext", "webkit", "pdfium"],
+        "valid_creators": ["skia", "chrome", "chromium", "itext", "openpdf", "webkit", "pdfium"],
     },
     "airasia": {
         "keywords": ["airasia", "air asia", "capital a", "www.airasia.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "itext", "webkit", "pdfium"],
+        "valid_creators": ["skia", "chrome", "chromium", "itext", "openpdf", "webkit", "pdfium"],
     },
     "garuda": {
         "keywords": ["garuda indonesia", "pt garuda", "citilink", "www.garuda-indonesia.com"],
-        "valid_creators": ["itext", "pdfium"],
+        "valid_creators": ["itext", "openpdf", "pdfium"],
     },
     "lion_air": {
         "keywords": ["lion air", "pt lion mentari", "batik air", "wings air"],
-        "valid_creators": ["itext", "pdfium"],
+        "valid_creators": ["itext", "openpdf", "pdfium"],
     },
     "kai": {
         "keywords": ["kereta api indonesia", "pt kai", "kai.id", "tiket.kai.id"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit", "itext", "pdfium"],
+        "valid_creators": ["skia", "chrome", "chromium", "webkit", "itext", "openpdf", "pdfium"],
     },
     # Struk tol & BBM umumnya foto struk kertas: tanpa validasi creator.
     "jasa_marga": {
@@ -87,6 +89,12 @@ SOFTWARE_LABELS: dict[str, str] = {
 
 CONFIDENCE_DEDUCTIONS: dict[str, float] = {
     "editing_software_detected": 0.55,
+    # Forensik struktur PDF (lihat tools/pdf_forensics.py)
+    "content_changed_after_creation": 0.55,
+    "hidden_text_under_overlay": 0.55,
+    "text_covered_by_white_box": 0.55,
+    "white_patch_behind_amount": 0.30,
+    "foreign_font_in_amount": 0.30,
     "modified_after_creation": 0.30,
     "metadata_mismatch": 0.20,
     "unknown_provider": 0.15,

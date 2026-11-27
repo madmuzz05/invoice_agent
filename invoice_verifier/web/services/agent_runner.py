@@ -12,6 +12,7 @@ from baca_invoice.models.authenticity import DocumentAuthenticity
 from baca_invoice.models.travel_document import TravelDocumentResult
 from baca_invoice.tools.authenticity import analyze_authenticity
 from baca_invoice.tools.pdf import count_pages, read_pdf, scanned_page_images
+from baca_invoice.tools.pdf_forensics import analyze_pdf_structure
 from baca_invoice.utils.merge_documents import merge_document_results
 from baca_invoice.utils.segments import format_pages_for_segmenter, parse_segments
 from google.adk.runners import Runner
@@ -122,7 +123,11 @@ class AgentRunnerService:
         merged = TravelDocumentResult.model_validate(merge_document_results(list(results)))
         # Keaslian dinilai dari keseluruhan file (metadata + seluruh teks).
         authenticity = DocumentAuthenticity.model_validate(
-            analyze_authenticity(content.get("metadata") or {}, content.get("full_text", ""))
+            analyze_authenticity(
+                content.get("metadata") or {},
+                content.get("full_text", ""),
+                await asyncio.to_thread(analyze_pdf_structure, job.file_path),
+            )
         )
         final = apply_postprocessing(merged, authenticity_override=authenticity)
         return validate_agent_result(final.model_dump())

@@ -25,7 +25,7 @@ _STUB_MODS = [
     "baca_invoice.agents.postprocess", "baca_invoice.agents.segmenter",
     "baca_invoice.tools", "baca_invoice.tools.constants",
     "baca_invoice.tools.combined", "baca_invoice.tools.authenticity",
-    "baca_invoice.tools.pdf",
+    "baca_invoice.tools.pdf", "baca_invoice.tools.pdf_forensics",
 ]
 for _name in _STUB_MODS:
     sys.modules.setdefault(_name, MagicMock())
@@ -65,7 +65,9 @@ class MockRunnerService:
         job = self._jobs.get(job_id)
         if job:
             job.status = JobStatus.DONE
-            job.result = {"verdict": "AUTENTIK", "summary": "Test OK", "total_payment": 0.0}
+            job.result = {
+                "verdict": "TIDAK ADA INDIKASI", "summary": "Test OK", "total_payment": 0.0,
+            }
 
     async def eviction_loop(self) -> None:
         await asyncio.sleep(86400)

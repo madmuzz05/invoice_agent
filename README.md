@@ -24,9 +24,12 @@ Aplikasi ekstraksi & verifikasi keaslian dokumen perjalanan dinas — tiket, inv
 - Pengecekan deterministik setelah LLM: struk ganda (No. Seri / No. Trans sama)
   dibuang, nominal tol yang ternyata sisa saldo dikoreksi/ditandai, total
   dihitung ulang
-- Analisis keaslian rule-based dari metadata PDF (software pengedit, modifikasi
-  pasca-cetak, provider) → **AUTENTIK**, **MENCURIGAKAN**, **PALSU/DIEDIT**, atau
-  **TIDAK DIVERIFIKASI** (struk kertas tol/BBM/kwitansi sewa)
+- Analisis keaslian rule-based (tanpa LLM) dari metadata PDF dan **forensik
+  struktur PDF** (isi berubah antar revisi, kotak putih menutupi teks, angka
+  tertimpa, font angka asing) → **tingkat indikasi**, bukan vonis:
+  `TIDAK ADA INDIKASI`, `INDIKASI LEMAH`, `INDIKASI KUAT`, atau
+  `TIDAK DAPAT DIANALISIS` (scan/foto struk kertas), lengkap dengan
+  `verdict_description` dan daftar temuan
 - `requires_manual_review` + `review_reasons` untuk hasil yang perlu dicek manusia
 
 ## Cara Kerja
@@ -39,7 +42,8 @@ Aplikasi ekstraksi & verifikasi keaslian dokumen perjalanan dinas — tiket, inv
    scan → JSON `TravelDocumentResult`.
 4. **Post-processing** (tanpa LLM): normalisasi tipe, dedup struk, cek nominal
    tol, penjumlahan, aturan mixed, confidence & alasan review.
-5. **Analisis keaslian** (tanpa LLM) dari metadata file asli.
+5. **Analisis keaslian** (tanpa LLM) dari metadata dan struktur file asli
+   (revisi, kotak putih, angka tertimpa, font asing) → tingkat indikasi.
 
 Detail kontrak response & aturan tiap subtype: [`invoice_verifier/docs/api/API.md`](invoice_verifier/docs/api/API.md).
 
@@ -60,7 +64,8 @@ invoice_agent/
 │   │   │   ├── pdf.py             # Baca PDF/gambar, OCR, gambar halaman untuk LLM
 │   │   │   ├── regions.py         # Deteksi kotak struk & teks menyamping (numpy)
 │   │   │   ├── combined.py        # Baca dokumen + analisis keaslian sekaligus
-│   │   │   ├── authenticity.py    # Analisis keaslian rule-based
+│   │   │   ├── authenticity.py    # Analisis keaslian rule-based (tingkat indikasi)
+│   │   │   ├── pdf_forensics.py   # Forensik struktur PDF (revisi, whiteout, font)
 │   │   │   ├── boarding_pass.py   # Pre-check boarding pass tanpa LLM
 │   │   │   └── constants.py       # Provider & software pengedit
 │   │   └── utils/                 # Aturan murni (mixed, multi dokumen, merge, cek tol, ...)
@@ -297,7 +302,8 @@ Poll hasil ekstraksi. Ulangi setiap 3–5 detik sampai `status` bukan `progress`
     "total_payment": 543700.0,
     "currency": "IDR",
     "authenticity": {
-      "verdict": "TIDAK DIVERIFIKASI",
+      "verdict": "TIDAK DAPAT DIANALISIS",
+      "verdict_description": "Keaslian tidak bisa dianalisis dari file ini, misalnya hasil scan/foto struk kertas ...",
       "is_suspicious": false,
       "confidence_score": 0.0,
       "warning_flags": []

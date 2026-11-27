@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from baca_invoice.models.authenticity import VERDICT_NOT_ANALYZABLE
 from baca_invoice.models.travel_document import TravelDocumentResult
 from baca_invoice.utils.mixed_subtype import (
     MIXED_SUBTYPE,
@@ -166,7 +167,7 @@ def _mark_unknown_result(result: dict) -> dict:
     result["requires_manual_review"] = True
 
     authenticity = dict(result.get("authenticity") or {})
-    authenticity["verdict"] = "TIDAK DIVERIFIKASI"
+    authenticity["verdict"] = VERDICT_NOT_ANALYZABLE
     authenticity["is_suspicious"] = False
     authenticity["confidence_score"] = 0.0
     authenticity["analysis_notes"] = (
