@@ -8,13 +8,8 @@
 # tunggu container healthy, lalu cek /health dari luar.
 #
 # Variabel CI/CD yang dibutuhkan (Settings → CI/CD → Variables, masked):
-#   Server deploy — SEMENTARA memakai server dev pismart (variabel group
-#   SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV, SERVER_SSH_USER, SERVER_SSH_PORT).
-#   Untuk pindah ke server sendiri, isi variabel project berikut (otomatis menimpa default):
-#     DEPLOY_SSH_HOST    host/IP server
-#     DEPLOY_SSH_USER    user SSH (harus bisa menjalankan docker)
-#     DEPLOY_SSH_KEY     private key SSH (isi lengkap, multi-baris; Protected, tidak bisa Masked)
-#     DEPLOY_SSH_PORT    port SSH
+#   Server deploy (variabel group pismart yang sudah ada):
+#     SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV, SERVER_SSH_USER, SERVER_SSH_PORT
 #   Aplikasi (environment scope "production" atau "*"):
 #     APP_HOST_PORT      port di server yang diteruskan ke container (8080)
 #     PINTER_API_KEY     wajib
@@ -69,24 +64,18 @@ workflow:
       - .cache/pip/
     policy: pull-push
 
-# Akses SSH ke server deploy. Default sementara: server dev pismart (variabel group).
-# Variabel project DEPLOY_SSH_* menimpa nilai di bawah tanpa perlu mengubah file ini.
+# Akses SSH ke server deploy (variabel group pismart).
 .ssh-target:
   image: alpine:3.20
-  variables:
-    DEPLOY_SSH_HOST: '$SSH_HOST_PISMART_DEV'
-    DEPLOY_SSH_USER: '$SERVER_SSH_USER'
-    DEPLOY_SSH_KEY: '$SSH_KEY_PISMART_DEV'
-    DEPLOY_SSH_PORT: '$SERVER_SSH_PORT'
   before_script:
-    - test -n "$DEPLOY_SSH_HOST" || { echo "DEPLOY_SSH_HOST belum di-set"; exit 1; }
-    - test -n "$DEPLOY_SSH_USER" || { echo "DEPLOY_SSH_USER belum di-set"; exit 1; }
-    - test -n "$DEPLOY_SSH_KEY" || { echo "DEPLOY_SSH_KEY belum di-set"; exit 1; }
+    - test -n "$SSH_HOST_PISMART_DEV" || { echo "SSH_HOST_PISMART_DEV belum di-set"; exit 1; }
+    - test -n "$SSH_KEY_PISMART_DEV" || { echo "SSH_KEY_PISMART_DEV belum di-set"; exit 1; }
+    - test -n "$SERVER_SSH_USER" && test -n "$SERVER_SSH_PORT"
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh
-    - printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - printf '%s\n' "$SSH_KEY_PISMART_DEV" | tr -d '\r' > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
-    - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p ${DEPLOY_SSH_PORT:-22} -o StrictHostKeyChecking=accept-new $DEPLOY_SSH_USER@$DEPLOY_SSH_HOST"
+    - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p $SERVER_SSH_PORT -o StrictHostKeyChecking=accept-new $SERVER_SSH_USER@$SSH_HOST_PISMART_DEV"
 
 #######################################
 # CODE QUALITY
@@ -297,7 +286,7 @@ build-production:
         runtime:
           name: ${APP_NAME}-runtime
       COMPOSE
-    - echo "Deploying ${DOCKER_IMAGE_TAG} to ${CI_ENVIRONMENT_NAME} ($DEPLOY_SSH_HOST:$APP_HOST_PORT)"
+    - echo "Deploying ${DOCKER_IMAGE_TAG} to ${CI_ENVIRONMENT_NAME} ($SSH_HOST_PISMART_DEV:$APP_HOST_PORT)"
     - $SSH_CMD "mkdir -p ~/${DEPLOY_PATH} && umask 077 && cat > ~/${DEPLOY_PATH}/.env" < app.env
     - $SSH_CMD "cat > ~/${DEPLOY_PATH}/docker-compose.yml" < docker-compose.yml
     - |
@@ -332,7 +321,7 @@ build-production:
     # Health check dari luar server (port ter-expose & jaringan), bukan hanya dari container.
     - |
       for i in 1 2 3 4 5 6; do
-        if wget -q -T 5 -O - "http://${DEPLOY_SSH_HOST}:${APP_HOST_PORT}/health"; then
+        if wget -q -T 5 -O - "http://${SSH_HOST_PISMART_DEV}:${APP_HOST_PORT}/health"; then
           echo; echo "Health check ${CI_ENVIRONMENT_NAME} passed"; exit 0
         fi
         sleep 5
@@ -368,7 +357,7 @@ deploy-production:
       allow_failure: true
   environment:
     name: production
-    url: http://${DEPLOY_SSH_HOST}:${APP_HOST_PORT}
+    url: http://${SSH_HOST_PISMART_DEV}:${APP_HOST_PORT}
 
 restart-production:
   extends: .restart
