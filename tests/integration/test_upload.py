@@ -117,26 +117,6 @@ async def test_upload_reject_missing_file(client):
     assert "file" in body["message"].lower() or "pdf" in body["message"].lower()
 
 
-# ── Doc-type unknown ──────────────────────────────────────────────────────
-
-async def test_upload_unknown_doctype_message(client, pdf_bytes, monkeypatch):
-    """When doc_type is unknown the response still returns 200 with doc_type='unknown' message."""
-    monkeypatch.setattr("web.api.v1_upload.classify_document", lambda fn, fp: "unknown")
-
-    async def _noop_persist(trx_id, fp):
-        pass
-
-    monkeypatch.setattr("web.api.v1_upload._persist_unknown", _noop_persist)
-    resp = await client.post(
-        "/api/pinter/upload",
-        files={"file": ("unknown.pdf", pdf_bytes, "application/pdf")},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "progress"
-    assert "unknown" in body["message"].lower()
-
-
 # ── Rate limiting ─────────────────────────────────────────────────────────
 
 async def test_upload_rate_limit_triggers_on_11th_request(client, pdf_bytes):

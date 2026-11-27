@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 import json
 import os
 import re
+from collections.abc import AsyncGenerator
 
 from google.adk.agents import BaseAgent, LlmAgent, SequentialAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
+from web.config import (
+    GEMINI_MODEL,
+    LLM_REASONING_EFFORT,
+    OPENAI_API_KEY,
+    OPENAI_BASE_URL,
+    OPENAI_MODEL,
+)
 
 from ..models.travel_document import TravelDocumentResult
 from ..tools.authenticity import analyze_authenticity
@@ -22,13 +29,6 @@ from .postprocess import (
     skip_llm_if_prechecked,
 )
 from .prompts import FORMATTER_PROMPT
-from web.config import (
-    GEMINI_MODEL,
-    LLM_REASONING_EFFORT,
-    OPENAI_API_KEY,
-    OPENAI_BASE_URL,
-    OPENAI_MODEL,
-)
 
 # Mode per dokumen: daftar nomor halaman yang diekstrak (lihat agent_runner).
 PAGE_NUMBERS_STATE_KEY = "page_numbers"

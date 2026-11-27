@@ -1,0 +1,431 @@
+# Pipeline GitLab kantor — mengikuti pola project pismart lain (UAM-FE, pismart_react).
+#
+#   MR / branch apa pun : lint + test + sbom
+#   development         : + SonarQube, build image :development, deploy otomatis ke server dev
+#   main                : + build image :production, deploy ke server prod saat tombol
+#                           ▶ deploy-production diklik (manual)
+#
+# Deploy dev & prod memakai langkah yang sama (.deploy): tulis .env + docker-compose.yml
+# di server lewat SSH, pull image, tunggu container healthy, lalu cek /health dari luar.
+#
+# Variabel CI/CD yang dibutuhkan (Settings → CI/CD → Variables, masked):
+#   Server (biasanya sudah ada di level group pismart):
+#     SERVER_SSH_USER, SERVER_SSH_PORT
+#     SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV     (dev)
+#     SSH_HOST_PISMART_PROD, SSH_KEY_PISMART_PROD   (prod)
+#   Aplikasi (set per environment scope "development" dan "production"):
+#     APP_HOST_PORT      port di server yang diteruskan ke container (8080)
+#     PINTER_API_KEY     wajib
+#     OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL   (mode OpenAI-compatible), atau
+#     GOOGLE_API_KEY, GEMINI_MODEL                    (mode Gemini)
+#     Opsional: lihat APP_ENV_KEYS di bawah; yang tidak di-set memakai default aplikasi.
+#   Opsional (job di-skip jika kosong): SONAR_HOST_URL, SONAR_TOKEN,
+#     DEPENDENCY_TRACK_URL, DEPENDENCY_TRACK_API_KEY
+
+stages:
+  - code-quality
+  - code-security
+  - development
+  - production
+
+default:
+  tags:
+    - pupuk
+
+variables:
+  PYTHON_IMAGE: python:3.12-slim
+  DOCKER_IMAGE_TAG: '${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}'
+  DOCKER_IMAGE_LATEST: '${CI_REGISTRY_IMAGE}:development'
+  DOCKER_IMAGE_PRODUCTION: '${CI_REGISTRY_IMAGE}:production'
+  APP_NAME: pismart-invoice-agent
+  DEPLOY_PATH: deployments/pismart-invoice-agent
+  # Env aplikasi yang diteruskan dari variabel CI/CD ke .env container (hanya yang di-set).
+  APP_ENV_KEYS: >-
+    PINTER_API_KEY PINTER_TRX_TTL_DAYS
+    OPENAI_BASE_URL OPENAI_API_KEY OPENAI_MODEL GOOGLE_API_KEY GEMINI_MODEL
+    LLM_REASONING_EFFORT LLM_SEND_PAGE_IMAGES LLM_MAX_PARALLEL_CALLS
+    ENABLE_DOCS MAX_UPLOAD_MB MAX_CONCURRENT_JOBS JOB_TTL_SECONDS
+  PIP_CACHE_DIR: '$CI_PROJECT_DIR/.cache/pip'
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # main & development selalu jalan (build/deploy), walau ada MR terbuka dari branch itu.
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "development"'
+    # Branch fitur yang punya MR terbuka: cukup pipeline MR, hindari pipeline ganda.
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+
+.python-job:
+  image: $PYTHON_IMAGE
+  cache:
+    key:
+      files:
+        - requirements.txt
+        - requirements-dev.txt
+    paths:
+      - .cache/pip/
+    policy: pull-push
+
+# Akses SSH ke server target; DEPLOY_HOST & DEPLOY_SSH_KEY diisi per job (dev/prod).
+.ssh-target:
+  image: alpine:3.20
+  before_script:
+    - test -n "$DEPLOY_HOST" || { echo "Host server belum di-set"; exit 1; }
+    - test -n "$DEPLOY_SSH_KEY" || { echo "SSH key server belum di-set"; exit 1; }
+    - test -n "$SERVER_SSH_USER" && test -n "$SERVER_SSH_PORT"
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p $SERVER_SSH_PORT -o StrictHostKeyChecking=accept-new $SERVER_SSH_USER@$DEPLOY_HOST"
+
+.dev-target:
+  variables:
+    DEPLOY_HOST: '$SSH_HOST_PISMART_DEV'
+    DEPLOY_SSH_KEY: '$SSH_KEY_PISMART_DEV'
+
+.prod-target:
+  variables:
+    DEPLOY_HOST: '$SSH_HOST_PISMART_PROD'
+    DEPLOY_SSH_KEY: '$SSH_KEY_PISMART_PROD'
+
+#######################################
+# CODE QUALITY
+#######################################
+lint:
+  extends: .python-job
+  stage: code-quality
+  needs: []
+  script:
+    - pip install ruff==0.14.0
+    - ruff check .
+
+test:
+  extends: .python-job
+  stage: code-quality
+  needs: []
+  before_script:
+    # Tesseract dipakai tes OCR di tests/unit/test_read_document.py.
+    - apt-get update
+    - apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+    - pip install -r requirements-dev.txt
+  script:
+    - pytest -q --junitxml=report.xml --cov=invoice_verifier --cov-report=term --cov-report=xml
+  coverage: '/^TOTAL.*\s+(\d+(?:\.\d+)?)%/'
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.xml
+    expire_in: 1 day
+
+#######################################
+# SAST
+#######################################
+sast:
+  stage: code-security
+  needs:
+    - job: lint
+      artifacts: false
+    - job: test
+      artifacts: true
+  image:
+    name: sonarsource/sonar-scanner-cli:11.0
+    entrypoint: ['']
+  variables:
+    GIT_DEPTH: '0'
+    SONAR_USER_HOME: '$CI_PROJECT_DIR/.sonar'
+  cache:
+    key: 'sonar-${CI_PROJECT_PATH_SLUG}'
+    paths:
+      - .sonar/cache/
+    policy: pull-push
+  script:
+    - |
+      if [ -z "$SONAR_HOST_URL" ] || [ -z "$SONAR_TOKEN" ]; then
+        echo "Skipping SonarQube scan because SONAR_HOST_URL or SONAR_TOKEN is not set."
+        exit 0
+      fi
+
+      sonar-scanner \
+        -Dsonar.host.url="$SONAR_HOST_URL" \
+        -Dsonar.login="$SONAR_TOKEN" \
+        -Dsonar.projectKey="${PROJECT_NAME:-$CI_PROJECT_PATH_SLUG}" \
+        -Dsonar.sources=invoice_verifier \
+        -Dsonar.tests=tests \
+        -Dsonar.python.version=3.12 \
+        -Dsonar.python.coverage.reportPaths=coverage.xml
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "development"'
+
+#######################################
+# SBOM
+#######################################
+sbom:
+  stage: code-security
+  needs: [lint]
+  image:
+    name: ghcr.io/aquasecurity/trivy:0.69.3
+    entrypoint: ['']
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - trivy fs --format cyclonedx --output sbom.xml .
+    - |
+      if [ -z "$DEPENDENCY_TRACK_URL" ] || [ -z "$DEPENDENCY_TRACK_API_KEY" ]; then
+        echo "Skipping Dependency-Track upload because variables are not set."
+        exit 0
+      fi
+
+      # Upload tidak memblokir pipeline (sama seperti project lain), tapi statusnya
+      # ditampilkan. 403/404 biasanya berarti project belum dibuat di Dependency-Track.
+      status=$(curl -s -o dt-response.txt -w '%{http_code}' -X POST "${DEPENDENCY_TRACK_URL%/}/api/v1/bom" \
+        -H "X-Api-Key:${DEPENDENCY_TRACK_API_KEY}" \
+        -H "Content-Type:multipart/form-data" \
+        -F "projectName=${PROJECT_NAME:-$CI_PROJECT_NAME}" \
+        -F "bom=@sbom.xml") || status="curl-error"
+      if [ "$status" = "200" ]; then
+        echo "SBOM uploaded to Dependency-Track"
+      else
+        echo "WARNING: Dependency-Track upload failed (HTTP $status):"
+        cat dt-response.txt; echo
+      fi
+  artifacts:
+    paths:
+      - sbom.xml
+    expire_in: 7 days
+
+#######################################
+# BUILD IMAGE
+#######################################
+.kaniko-build:
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: ['']
+  script:
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - >
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${DOCKER_IMAGE_TAG}"
+      --destination "${CHANNEL_IMAGE}"
+      --cache=true
+      --cache-repo "${CI_REGISTRY_IMAGE}/cache"
+
+build-development:
+  extends: .kaniko-build
+  stage: development
+  needs:
+    - job: lint
+      artifacts: false
+    - job: test
+      artifacts: false
+    - job: sast
+      artifacts: false
+    - job: sbom
+      artifacts: false
+  variables:
+    CHANNEL_IMAGE: '${DOCKER_IMAGE_LATEST}'
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "development"'
+  environment:
+    name: development
+    action: prepare
+
+build-production:
+  extends: .kaniko-build
+  stage: production
+  needs:
+    - job: lint
+      artifacts: false
+    - job: test
+      artifacts: false
+    - job: sbom
+      artifacts: false
+  variables:
+    CHANNEL_IMAGE: '${DOCKER_IMAGE_PRODUCTION}'
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  environment:
+    name: production
+    action: prepare
+
+#######################################
+# DEPLOY (DOCKER COMPOSE) — template dev & prod
+#######################################
+.deploy:
+  extends: .ssh-target
+  script:
+    - test -n "$APP_HOST_PORT" || { echo "APP_HOST_PORT belum di-set"; exit 1; }
+    - test -n "$PINTER_API_KEY" || { echo "PINTER_API_KEY belum di-set"; exit 1; }
+    - test -n "${OPENAI_API_KEY}${GOOGLE_API_KEY}" || { echo "Set OPENAI_* atau GOOGLE_API_KEY"; exit 1; }
+    # .env container: nilai tetap + variabel CI/CD yang di-set. Variabel yang tidak di-set
+    # tidak ditulis supaya aplikasi memakai default-nya (baris kosong = nilai kosong).
+    - |
+      umask 077
+      {
+        echo "APP_ENV=production"
+        echo "PORT=8080"
+        echo "TZ=Asia/Jakarta"
+        for key in $APP_ENV_KEYS; do
+          if value="$(printenv "$key")"; then
+            printf '%s=%s\n' "$key" "$value"
+          fi
+        done
+      } > app.env
+    - |
+      cat > docker-compose.yml << COMPOSE
+      services:
+        app:
+          image: ${DOCKER_IMAGE_TAG}
+          container_name: ${APP_NAME}
+          init: true
+          security_opt:
+            - no-new-privileges:true
+          cap_drop:
+            - ALL
+          mem_limit: 2g
+          memswap_limit: 2g
+          cpus: 2.0
+          pids_limit: 512
+          ports:
+            - "${APP_HOST_PORT}:8080"
+          env_file:
+            - .env
+          volumes:
+            # SQLite & upload sementara; volume baru mewarisi owner appuser dari image.
+            - runtime:/app/runtime
+          restart: unless-stopped
+          healthcheck:
+            test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 20s
+          logging:
+            driver: "json-file"
+            options:
+              max-size: "10m"
+              max-file: "3"
+      volumes:
+        runtime:
+          name: ${APP_NAME}-runtime
+      COMPOSE
+    - echo "Deploying ${DOCKER_IMAGE_TAG} to ${CI_ENVIRONMENT_NAME} ($DEPLOY_HOST:$APP_HOST_PORT)"
+    - $SSH_CMD "mkdir -p ~/${DEPLOY_PATH} && umask 077 && cat > ~/${DEPLOY_PATH}/.env" < app.env
+    - $SSH_CMD "cat > ~/${DEPLOY_PATH}/docker-compose.yml" < docker-compose.yml
+    - |
+      $SSH_CMD bash -s << ENDSSH
+        set -eu
+        cd ~/${DEPLOY_PATH}
+
+        echo "${CI_REGISTRY_PASSWORD}" |
+          docker login -u "${CI_REGISTRY_USER}" --password-stdin "${CI_REGISTRY}"
+
+        docker compose config --quiet
+        docker compose pull app
+        docker compose up -d --no-deps --force-recreate app
+
+        attempts=0
+        until [ "\$(docker inspect --format='{{.State.Health.Status}}' ${APP_NAME})" = "healthy" ]; do
+          attempts=\$((attempts + 1))
+          if [ "\$attempts" -ge 24 ]; then
+            docker compose ps
+            docker compose logs --tail=100 app
+            docker logout "${CI_REGISTRY}"
+            exit 1
+          fi
+          sleep 5
+        done
+
+        docker compose ps
+        docker image prune -f --filter "until=168h"
+        docker logout "${CI_REGISTRY}"
+        echo "Deployment to ${CI_ENVIRONMENT_NAME} completed successfully"
+      ENDSSH
+    # Health check dari luar server (port ter-expose & jaringan), bukan hanya dari container.
+    - |
+      for i in 1 2 3 4 5 6; do
+        if wget -q -T 5 -O - "http://${DEPLOY_HOST}:${APP_HOST_PORT}/health"; then
+          echo; echo "Health check ${CI_ENVIRONMENT_NAME} passed"; exit 0
+        fi
+        sleep 5
+      done
+      echo "Health check ${CI_ENVIRONMENT_NAME} failed"; exit 1
+  after_script:
+    - rm -f app.env
+
+.restart:
+  extends: .ssh-target
+  script:
+    - |
+      $SSH_CMD bash -s << ENDSSH
+        set -eu
+        cd ~/${DEPLOY_PATH}
+        docker compose restart app
+        docker compose ps
+        docker compose logs --tail=50 app
+      ENDSSH
+
+#######################################
+# DEVELOPMENT — otomatis setiap push ke development
+#######################################
+deploy-development:
+  extends: [.deploy, .dev-target]
+  stage: development
+  resource_group: development
+  needs: [build-development]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "development"'
+  environment:
+    name: development
+    url: http://${SSH_HOST_PISMART_DEV}:${APP_HOST_PORT}
+
+restart-development:
+  extends: [.restart, .dev-target]
+  stage: development
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "development"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: development
+    action: access
+
+#######################################
+# PRODUCTION — manual: klik ▶ deploy-production di pipeline main
+#######################################
+deploy-production:
+  extends: [.deploy, .prod-target]
+  stage: production
+  resource_group: production
+  needs: [build-production]
+  rules:
+    # allow_failure: pipeline main tetap hijau selama deploy belum diklik.
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: production
+    url: http://${SSH_HOST_PISMART_PROD}:${APP_HOST_PORT}
+
+restart-production:
+  extends: [.restart, .prod-target]
+  stage: production
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: production
+    action: access

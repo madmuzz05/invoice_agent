@@ -41,8 +41,7 @@ async def test_null_byte_in_filename(client, pdf_bytes):
 
 async def test_x_api_key_auth_when_configured(client, pdf_bytes, monkeypatch):
     """When PINTER_API_KEY is set, requests without the header are rejected."""
-    import web.api.v1_upload as m
-    monkeypatch.setattr(m, "PINTER_API_KEY", "secret-key")
+    monkeypatch.setattr("web.security.PINTER_API_KEY", "secret-key")
 
     resp = await client.post(
         "/api/pinter/upload",

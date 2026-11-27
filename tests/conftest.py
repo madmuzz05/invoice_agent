@@ -37,6 +37,10 @@ os.close(_tmp_db_fd)
 os.environ.setdefault("UPLOAD_DIR", _tmp_upload)
 os.environ.setdefault("SQLITE_DB_PATH", _tmp_db_path)
 os.environ.setdefault("APP_ENV", "development")
+# web.config runs load_dotenv(), which never overrides variables already set. Pin
+# the API key to empty so a developer's .env cannot turn auth on for every test;
+# tests that need auth patch web.security.PINTER_API_KEY themselves.
+os.environ["PINTER_API_KEY"] = ""
 
 # ── Regular imports after stubs are in place ──────────────────────────────
 import asyncio  # noqa: E402
