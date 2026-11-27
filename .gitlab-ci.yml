@@ -8,8 +8,11 @@
 # tunggu container healthy, lalu cek /health dari luar.
 #
 # Variabel CI/CD yang dibutuhkan (Settings → CI/CD → Variables, masked):
-#   Server (biasanya sudah ada di level group pismart):
-#     SERVER_SSH_USER, SERVER_SSH_PORT, SSH_HOST_PISMART_PROD, SSH_KEY_PISMART_PROD
+#   Server prod (khusus project ini, tidak memakai variabel group):
+#     DEPLOY_SSH_HOST    host/IP server
+#     DEPLOY_SSH_USER    user SSH (harus bisa menjalankan docker)
+#     DEPLOY_SSH_KEY     private key SSH (isi lengkap, multi-baris; Protected, tidak bisa Masked)
+#     DEPLOY_SSH_PORT    opsional, default 22
 #   Aplikasi (environment scope "production" atau "*"):
 #     APP_HOST_PORT      port di server yang diteruskan ke container (8080)
 #     PINTER_API_KEY     wajib
@@ -64,23 +67,18 @@ workflow:
       - .cache/pip/
     policy: pull-push
 
-# Akses SSH ke server target; DEPLOY_HOST & DEPLOY_SSH_KEY diisi per job (dev/prod).
+# Akses SSH ke server prod (variabel DEPLOY_SSH_* milik project ini).
 .ssh-target:
   image: alpine:3.20
   before_script:
-    - test -n "$DEPLOY_HOST" || { echo "Host server belum di-set"; exit 1; }
-    - test -n "$DEPLOY_SSH_KEY" || { echo "SSH key server belum di-set"; exit 1; }
-    - test -n "$SERVER_SSH_USER" && test -n "$SERVER_SSH_PORT"
+    - test -n "$DEPLOY_SSH_HOST" || { echo "DEPLOY_SSH_HOST belum di-set"; exit 1; }
+    - test -n "$DEPLOY_SSH_USER" || { echo "DEPLOY_SSH_USER belum di-set"; exit 1; }
+    - test -n "$DEPLOY_SSH_KEY" || { echo "DEPLOY_SSH_KEY belum di-set"; exit 1; }
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh
     - printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
-    - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p $SERVER_SSH_PORT -o StrictHostKeyChecking=accept-new $SERVER_SSH_USER@$DEPLOY_HOST"
-
-.prod-target:
-  variables:
-    DEPLOY_HOST: '$SSH_HOST_PISMART_PROD'
-    DEPLOY_SSH_KEY: '$SSH_KEY_PISMART_PROD'
+    - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p ${DEPLOY_SSH_PORT:-22} -o StrictHostKeyChecking=accept-new $DEPLOY_SSH_USER@$DEPLOY_SSH_HOST"
 
 #######################################
 # CODE QUALITY
@@ -291,7 +289,7 @@ build-production:
         runtime:
           name: ${APP_NAME}-runtime
       COMPOSE
-    - echo "Deploying ${DOCKER_IMAGE_TAG} to ${CI_ENVIRONMENT_NAME} ($DEPLOY_HOST:$APP_HOST_PORT)"
+    - echo "Deploying ${DOCKER_IMAGE_TAG} to ${CI_ENVIRONMENT_NAME} ($DEPLOY_SSH_HOST:$APP_HOST_PORT)"
     - $SSH_CMD "mkdir -p ~/${DEPLOY_PATH} && umask 077 && cat > ~/${DEPLOY_PATH}/.env" < app.env
     - $SSH_CMD "cat > ~/${DEPLOY_PATH}/docker-compose.yml" < docker-compose.yml
     - |
@@ -326,7 +324,7 @@ build-production:
     # Health check dari luar server (port ter-expose & jaringan), bukan hanya dari container.
     - |
       for i in 1 2 3 4 5 6; do
-        if wget -q -T 5 -O - "http://${DEPLOY_HOST}:${APP_HOST_PORT}/health"; then
+        if wget -q -T 5 -O - "http://${DEPLOY_SSH_HOST}:${APP_HOST_PORT}/health"; then
           echo; echo "Health check ${CI_ENVIRONMENT_NAME} passed"; exit 0
         fi
         sleep 5
@@ -351,7 +349,7 @@ build-production:
 # PRODUCTION — manual: klik ▶ deploy-production di pipeline main
 #######################################
 deploy-production:
-  extends: [.deploy, .prod-target]
+  extends: .deploy
   stage: production
   resource_group: production
   needs: [build-production]
@@ -362,10 +360,10 @@ deploy-production:
       allow_failure: true
   environment:
     name: production
-    url: http://${SSH_HOST_PISMART_PROD}:${APP_HOST_PORT}
+    url: http://${DEPLOY_SSH_HOST}:${APP_HOST_PORT}
 
 restart-production:
-  extends: [.restart, .prod-target]
+  extends: .restart
   stage: production
   needs: []
   rules:
