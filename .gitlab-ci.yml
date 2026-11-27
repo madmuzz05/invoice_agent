@@ -1,14 +1,20 @@
 # Pipeline GitLab kantor — mengikuti pola project pismart lain (UAM-FE, pismart_react).
 #
 #   MR / branch apa pun : lint + test + sbom
-#   development         : + SonarQube, build image :development, deploy ke server dev
-#   main                : + build image :production (deploy production manual)
+#   development         : + SonarQube, build image :development, deploy otomatis ke server dev
+#   main                : + build image :production, deploy ke server prod saat tombol
+#                           ▶ deploy-production diklik (manual)
+#
+# Deploy dev & prod memakai langkah yang sama (.deploy): tulis .env + docker-compose.yml
+# di server lewat SSH, pull image, tunggu container healthy, lalu cek /health dari luar.
 #
 # Variabel CI/CD yang dibutuhkan (Settings → CI/CD → Variables, masked):
-#   Deploy dev (biasanya sudah ada di level group pismart):
-#     SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV, SERVER_SSH_USER, SERVER_SSH_PORT
-#   Aplikasi (scope environment "development"):
-#     APP_HOST_PORT      port di server dev yang diteruskan ke container (8080)
+#   Server (biasanya sudah ada di level group pismart):
+#     SERVER_SSH_USER, SERVER_SSH_PORT
+#     SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV     (dev)
+#     SSH_HOST_PISMART_PROD, SSH_KEY_PISMART_PROD   (prod)
+#   Aplikasi (set per environment scope "development" dan "production"):
+#     APP_HOST_PORT      port di server yang diteruskan ke container (8080)
 #     PINTER_API_KEY     wajib
 #     OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL   (mode OpenAI-compatible), atau
 #     GOOGLE_API_KEY, GEMINI_MODEL                    (mode Gemini)
@@ -63,14 +69,28 @@ workflow:
       - .cache/pip/
     policy: pull-push
 
-.ssh-dev:
+# Akses SSH ke server target; DEPLOY_HOST & DEPLOY_SSH_KEY diisi per job (dev/prod).
+.ssh-target:
   image: alpine:3.20
   before_script:
+    - test -n "$DEPLOY_HOST" || { echo "Host server belum di-set"; exit 1; }
+    - test -n "$DEPLOY_SSH_KEY" || { echo "SSH key server belum di-set"; exit 1; }
+    - test -n "$SERVER_SSH_USER" && test -n "$SERVER_SSH_PORT"
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh
-    - printf '%s\n' "$SSH_KEY_PISMART_DEV" | tr -d '\r' > ~/.ssh/id_rsa
+    - printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
-    - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p $SERVER_SSH_PORT -o StrictHostKeyChecking=accept-new $SERVER_SSH_USER@$SSH_HOST_PISMART_DEV"
+    - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p $SERVER_SSH_PORT -o StrictHostKeyChecking=accept-new $SERVER_SSH_USER@$DEPLOY_HOST"
+
+.dev-target:
+  variables:
+    DEPLOY_HOST: '$SSH_HOST_PISMART_DEV'
+    DEPLOY_SSH_KEY: '$SSH_KEY_PISMART_DEV'
+
+.prod-target:
+  variables:
+    DEPLOY_HOST: '$SSH_HOST_PISMART_PROD'
+    DEPLOY_SSH_KEY: '$SSH_KEY_PISMART_PROD'
 
 #######################################
 # CODE QUALITY
@@ -232,13 +252,10 @@ build-production:
     action: prepare
 
 #######################################
-# DEPLOY DEVELOPMENT (DOCKER COMPOSE)
+# DEPLOY (DOCKER COMPOSE) — template dev & prod
 #######################################
-deploy-development:
-  extends: .ssh-dev
-  stage: development
-  resource_group: development
-  needs: [build-development]
+.deploy:
+  extends: .ssh-target
   script:
     - test -n "$APP_HOST_PORT" || { echo "APP_HOST_PORT belum di-set"; exit 1; }
     - test -n "$PINTER_API_KEY" || { echo "PINTER_API_KEY belum di-set"; exit 1; }
@@ -295,7 +312,7 @@ deploy-development:
         runtime:
           name: ${APP_NAME}-runtime
       COMPOSE
-    - echo "Deploying ${DOCKER_IMAGE_TAG} to $SSH_HOST_PISMART_DEV:$APP_HOST_PORT"
+    - echo "Deploying ${DOCKER_IMAGE_TAG} to ${CI_ENVIRONMENT_NAME} ($DEPLOY_HOST:$APP_HOST_PORT)"
     - $SSH_CMD "mkdir -p ~/${DEPLOY_PATH} && umask 077 && cat > ~/${DEPLOY_PATH}/.env" < app.env
     - $SSH_CMD "cat > ~/${DEPLOY_PATH}/docker-compose.yml" < docker-compose.yml
     - |
@@ -325,45 +342,22 @@ deploy-development:
         docker compose ps
         docker image prune -f --filter "until=168h"
         docker logout "${CI_REGISTRY}"
-        echo "Deployment completed successfully"
+        echo "Deployment to ${CI_ENVIRONMENT_NAME} completed successfully"
       ENDSSH
+    # Health check dari luar server (port ter-expose & jaringan), bukan hanya dari container.
+    - |
+      for i in 1 2 3 4 5 6; do
+        if wget -q -T 5 -O - "http://${DEPLOY_HOST}:${APP_HOST_PORT}/health"; then
+          echo; echo "Health check ${CI_ENVIRONMENT_NAME} passed"; exit 0
+        fi
+        sleep 5
+      done
+      echo "Health check ${CI_ENVIRONMENT_NAME} failed"; exit 1
   after_script:
     - rm -f app.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "development"'
-  environment:
-    name: development
-    url: http://${SSH_HOST_PISMART_DEV}:${APP_HOST_PORT}
 
-#######################################
-# EXTERNAL HEALTH CHECK
-#######################################
-health-check-development:
-  stage: development
-  needs: [deploy-development]
-  image: alpine:3.20
-  script:
-    - apk add --no-cache curl
-    - >
-      curl --fail --silent --show-error
-      --retry 6
-      --retry-delay 5
-      --retry-all-errors
-      "http://${SSH_HOST_PISMART_DEV}:${APP_HOST_PORT}/health"
-    - echo
-    - echo "Health check passed"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "development"'
-  environment:
-    name: development
-
-#######################################
-# MANUAL CONTAINER RESTART
-#######################################
-restart-development:
-  extends: .ssh-dev
-  stage: development
-  needs: []
+.restart:
+  extends: .ssh-target
   script:
     - |
       $SSH_CMD bash -s << ENDSSH
@@ -373,9 +367,58 @@ restart-development:
         docker compose ps
         docker compose logs --tail=50 app
       ENDSSH
+
+#######################################
+# DEVELOPMENT — otomatis setiap push ke development
+#######################################
+deploy-development:
+  extends: [.deploy, .dev-target]
+  stage: development
+  resource_group: development
+  needs: [build-development]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "development"'
+  environment:
+    name: development
+    url: http://${SSH_HOST_PISMART_DEV}:${APP_HOST_PORT}
+
+restart-development:
+  extends: [.restart, .dev-target]
+  stage: development
+  needs: []
   rules:
     - if: '$CI_COMMIT_BRANCH == "development"'
       when: manual
       allow_failure: true
   environment:
     name: development
+    action: access
+
+#######################################
+# PRODUCTION — manual: klik ▶ deploy-production di pipeline main
+#######################################
+deploy-production:
+  extends: [.deploy, .prod-target]
+  stage: production
+  resource_group: production
+  needs: [build-production]
+  rules:
+    # allow_failure: pipeline main tetap hijau selama deploy belum diklik.
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: production
+    url: http://${SSH_HOST_PISMART_PROD}:${APP_HOST_PORT}
+
+restart-production:
+  extends: [.restart, .prod-target]
+  stage: production
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: production
+    action: access

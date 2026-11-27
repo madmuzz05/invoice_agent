@@ -241,12 +241,15 @@ Repo ini di-mirror ke GitHub dan GitLab kantor; keduanya menjalankan lint dan te
 | | GitHub Actions (`.github/workflows/ci.yml`) | GitLab CI (`.gitlab-ci.yml`) |
 |---|---|---|
 | Setiap PR/MR & push | ruff, pytest, docker build (tanpa push) | ruff, pytest (+ coverage), SBOM Trivy |
-| `development` | sama | + SonarQube, image `:development` ke registry GitLab, deploy ke server dev (docker compose), health check |
-| `main` | sama | + image `:production` (deploy production manual) |
+| `development` | sama | + SonarQube, image `:development` ke registry GitLab, deploy otomatis ke server dev |
+| `main` | sama | + image `:production`, deploy ke server prod saat tombol ▶ `deploy-production` diklik |
 
-Variabel CI/CD yang dibutuhkan GitLab tertulis di bagian atas `.gitlab-ci.yml`.
-Di server dev, data SQLite & upload disimpan di volume Docker
-`pismart-invoice-agent-runtime`, jadi tetap ada saat redeploy.
+Deploy dev dan prod memakai langkah yang sama (docker compose lewat SSH, tunggu container
+healthy, cek `/health` dari luar). Ada juga job manual `restart-development` /
+`restart-production`. Variabel CI/CD yang dibutuhkan tertulis di bagian atas
+`.gitlab-ci.yml`; variabel aplikasi di-set per environment (`development`, `production`).
+Data SQLite & upload disimpan di volume Docker `pismart-invoice-agent-runtime` di
+masing-masing server, jadi tetap ada saat redeploy.
 
 ## API Endpoint
 
