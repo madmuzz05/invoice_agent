@@ -184,12 +184,19 @@ sbom:
         exit 0
       fi
 
-      curl --fail -X POST "${DEPENDENCY_TRACK_URL%/}/api/v1/bom" \
+      # Upload tidak memblokir pipeline (sama seperti project lain), tapi statusnya
+      # ditampilkan. 403/404 biasanya berarti project belum dibuat di Dependency-Track.
+      status=$(curl -s -o dt-response.txt -w '%{http_code}' -X POST "${DEPENDENCY_TRACK_URL%/}/api/v1/bom" \
         -H "X-Api-Key:${DEPENDENCY_TRACK_API_KEY}" \
         -H "Content-Type:multipart/form-data" \
-        -F "autoCreate=true" \
         -F "projectName=${PROJECT_NAME:-$CI_PROJECT_NAME}" \
-        -F "bom=@sbom.xml"
+        -F "bom=@sbom.xml") || status="curl-error"
+      if [ "$status" = "200" ]; then
+        echo "SBOM uploaded to Dependency-Track"
+      else
+        echo "WARNING: Dependency-Track upload failed (HTTP $status):"
+        cat dt-response.txt; echo
+      fi
   artifacts:
     paths:
       - sbom.xml
