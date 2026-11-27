@@ -8,7 +8,9 @@
 #
 # Variabel CI/CD:
 #   Server (group pismart): SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV (dev),
-#     SSH_HOST_PISMART_2ND + SSH_KEY_PISMART (prod), SERVER_SSH_PORT, SERVER_SSH_USER
+#     SSH_HOST_PISMART_2ND + SSH_KEY_PISMART (prod)
+#   Opsional: SERVER_SSH_USER (default root), SERVER_SSH_PORT (default 22);
+#     bisa di-set per environment scope kalau dev dan prod berbeda.
 #   Aplikasi (project, scope per environment atau "*"):
 #     APP_HOST_PORT                                   port di server → container 8080
 #     PINTER_API_KEY                                  wajib
@@ -255,17 +257,15 @@ deploy-development:
     - chmod 600 ~/.ssh/id_rsa
   script:
     - test -n "$SSH_HOST_PISMART_DEV"
-    - test -n "$SERVER_SSH_PORT"
-    - test -n "$SERVER_SSH_USER"
     - test -n "$APP_HOST_PORT"
     - test -n "$PINTER_API_KEY"
     - test -n "${OPENAI_API_KEY}${GOOGLE_API_KEY}"
-    - echo "Deploying to $SSH_HOST_PISMART_DEV:$SERVER_SSH_PORT"
+    - echo "Deploying to $SSH_HOST_PISMART_DEV:${SERVER_SSH_PORT:-22}"
     # Variabel opsional memakai ${VAR+...}: tidak di-set = baris kosong = default aplikasi.
     - |
-      ssh -i ~/.ssh/id_rsa -p "$SERVER_SSH_PORT" \
+      ssh -i ~/.ssh/id_rsa -p "${SERVER_SSH_PORT:-22}" \
       -o StrictHostKeyChecking=accept-new \
-      "$SERVER_SSH_USER@$SSH_HOST_PISMART_DEV" bash -s << ENDSSH
+      "${SERVER_SSH_USER:-root}@$SSH_HOST_PISMART_DEV" bash -s << ENDSSH
         set -eu
 
         echo "${CI_REGISTRY_PASSWORD}" |
@@ -398,9 +398,9 @@ restart-development:
     - chmod 600 ~/.ssh/id_rsa
   script:
     - |
-      ssh -i ~/.ssh/id_rsa -p "$SERVER_SSH_PORT" \
+      ssh -i ~/.ssh/id_rsa -p "${SERVER_SSH_PORT:-22}" \
       -o StrictHostKeyChecking=accept-new \
-      "$SERVER_SSH_USER@$SSH_HOST_PISMART_DEV" << ENDSSH
+      "${SERVER_SSH_USER:-root}@$SSH_HOST_PISMART_DEV" << ENDSSH
         set -eu
         cd ~/deployments/${APP_NAME}
         docker compose restart ${APP_NAME}
@@ -431,16 +431,14 @@ deploy-production:
     - chmod 600 ~/.ssh/id_rsa
   script:
     - test -n "$SSH_HOST_PISMART_2ND"
-    - test -n "$SERVER_SSH_PORT"
-    - test -n "$SERVER_SSH_USER"
     - test -n "$APP_HOST_PORT"
     - test -n "$PINTER_API_KEY"
     - test -n "${OPENAI_API_KEY}${GOOGLE_API_KEY}"
-    - echo "Deploying to $SSH_HOST_PISMART_2ND:$SERVER_SSH_PORT"
+    - echo "Deploying to $SSH_HOST_PISMART_2ND:${SERVER_SSH_PORT:-22}"
     - |
-      ssh -i ~/.ssh/id_rsa -p "$SERVER_SSH_PORT" \
+      ssh -i ~/.ssh/id_rsa -p "${SERVER_SSH_PORT:-22}" \
       -o StrictHostKeyChecking=accept-new \
-      "$SERVER_SSH_USER@$SSH_HOST_PISMART_2ND" bash -s << ENDSSH
+      "${SERVER_SSH_USER:-root}@$SSH_HOST_PISMART_2ND" bash -s << ENDSSH
         set -eu
 
         echo "${CI_REGISTRY_PASSWORD}" |
@@ -579,12 +577,10 @@ restart-production:
     - chmod 600 ~/.ssh/id_rsa
   script:
     - test -n "$SSH_HOST_PISMART_2ND"
-    - test -n "$SERVER_SSH_PORT"
-    - test -n "$SERVER_SSH_USER"
     - |
-      ssh -i ~/.ssh/id_rsa -p "$SERVER_SSH_PORT" \
+      ssh -i ~/.ssh/id_rsa -p "${SERVER_SSH_PORT:-22}" \
       -o StrictHostKeyChecking=accept-new \
-      "$SERVER_SSH_USER@$SSH_HOST_PISMART_2ND" << ENDSSH
+      "${SERVER_SSH_USER:-root}@$SSH_HOST_PISMART_2ND" << ENDSSH
         set -eu
         cd ~/deployments/${APP_NAME}
         docker compose restart ${APP_NAME}
