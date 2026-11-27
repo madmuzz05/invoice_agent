@@ -1,19 +1,16 @@
 # Pipeline GitLab kantor — mengikuti pola project pismart lain (UAM-FE, pismart_react).
 #
 #   MR / branch apa pun : lint + test + sbom
-#   development         : + SonarQube, build image :development, deploy otomatis ke server dev
-#   main                : + build image :production, deploy ke server prod saat tombol
-#                           ▶ deploy-production diklik (manual)
+#   main                : + SonarQube, build image :production, deploy ke server prod saat
+#                           tombol ▶ deploy-production diklik (manual)
 #
-# Deploy dev & prod memakai langkah yang sama (.deploy): tulis .env + docker-compose.yml
-# di server lewat SSH, pull image, tunggu container healthy, lalu cek /health dari luar.
+# Deploy (.deploy): tulis .env + docker-compose.yml di server lewat SSH, pull image,
+# tunggu container healthy, lalu cek /health dari luar.
 #
 # Variabel CI/CD yang dibutuhkan (Settings → CI/CD → Variables, masked):
 #   Server (biasanya sudah ada di level group pismart):
-#     SERVER_SSH_USER, SERVER_SSH_PORT
-#     SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV     (dev)
-#     SSH_HOST_PISMART_PROD, SSH_KEY_PISMART_PROD   (prod)
-#   Aplikasi (set per environment scope "development" dan "production"):
+#     SERVER_SSH_USER, SERVER_SSH_PORT, SSH_HOST_PISMART_PROD, SSH_KEY_PISMART_PROD
+#   Aplikasi (environment scope "production" atau "*"):
 #     APP_HOST_PORT      port di server yang diteruskan ke container (8080)
 #     PINTER_API_KEY     wajib
 #     OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL   (mode OpenAI-compatible), atau
@@ -25,7 +22,6 @@
 stages:
   - code-quality
   - code-security
-  - development
   - production
 
 default:
@@ -35,7 +31,6 @@ default:
 variables:
   PYTHON_IMAGE: python:3.12-slim
   DOCKER_IMAGE_TAG: '${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}'
-  DOCKER_IMAGE_LATEST: '${CI_REGISTRY_IMAGE}:development'
   DOCKER_IMAGE_PRODUCTION: '${CI_REGISTRY_IMAGE}:production'
   APP_NAME: pismart-invoice-agent
   DEPLOY_PATH: deployments/pismart-invoice-agent
@@ -51,8 +46,8 @@ variables:
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    # main & development selalu jalan (build/deploy), walau ada MR terbuka dari branch itu.
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "development"'
+    # main selalu jalan (build/deploy).
+    - if: '$CI_COMMIT_BRANCH == "main"'
     # Branch fitur yang punya MR terbuka: cukup pipeline MR, hindari pipeline ganda.
     - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
       when: never
@@ -81,11 +76,6 @@ workflow:
     - printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - export SSH_CMD="ssh -i $HOME/.ssh/id_rsa -p $SERVER_SSH_PORT -o StrictHostKeyChecking=accept-new $SERVER_SSH_USER@$DEPLOY_HOST"
-
-.dev-target:
-  variables:
-    DEPLOY_HOST: '$SSH_HOST_PISMART_DEV'
-    DEPLOY_SSH_KEY: '$SSH_KEY_PISMART_DEV'
 
 .prod-target:
   variables:
@@ -163,7 +153,7 @@ sast:
         -Dsonar.python.version=3.12 \
         -Dsonar.python.coverage.reportPaths=coverage.xml
   rules:
-    - if: '$CI_COMMIT_BRANCH == "development"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 #######################################
 # SBOM
@@ -220,26 +210,6 @@ sbom:
       --cache=true
       --cache-repo "${CI_REGISTRY_IMAGE}/cache"
 
-build-development:
-  extends: .kaniko-build
-  stage: development
-  needs:
-    - job: lint
-      artifacts: false
-    - job: test
-      artifacts: false
-    - job: sast
-      artifacts: false
-    - job: sbom
-      artifacts: false
-  variables:
-    CHANNEL_IMAGE: '${DOCKER_IMAGE_LATEST}'
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "development"'
-  environment:
-    name: development
-    action: prepare
-
 build-production:
   extends: .kaniko-build
   stage: production
@@ -247,6 +217,8 @@ build-production:
     - job: lint
       artifacts: false
     - job: test
+      artifacts: false
+    - job: sast
       artifacts: false
     - job: sbom
       artifacts: false
@@ -259,7 +231,7 @@ build-production:
     action: prepare
 
 #######################################
-# DEPLOY (DOCKER COMPOSE) — template dev & prod
+# DEPLOY (DOCKER COMPOSE) — template
 #######################################
 .deploy:
   extends: .ssh-target
@@ -374,32 +346,6 @@ build-production:
         docker compose ps
         docker compose logs --tail=50 app
       ENDSSH
-
-#######################################
-# DEVELOPMENT — otomatis setiap push ke development
-#######################################
-deploy-development:
-  extends: [.deploy, .dev-target]
-  stage: development
-  resource_group: development
-  needs: [build-development]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "development"'
-  environment:
-    name: development
-    url: http://${SSH_HOST_PISMART_DEV}:${APP_HOST_PORT}
-
-restart-development:
-  extends: [.restart, .dev-target]
-  stage: development
-  needs: []
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "development"'
-      when: manual
-      allow_failure: true
-  environment:
-    name: development
-    action: access
 
 #######################################
 # PRODUCTION — manual: klik ▶ deploy-production di pipeline main
