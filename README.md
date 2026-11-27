@@ -236,17 +236,19 @@ Tes tidak memanggil LLM dan tidak membaca `PINTER_API_KEY` dari `.env`.
 
 ## CI/CD
 
-Repo ini di-mirror ke GitHub dan GitLab kantor; keduanya menjalankan lint dan tes.
+Repo ini di-mirror ke GitHub dan GitLab kantor. GitLab CI memakai pola yang sama dengan
+project pismart lain (UAM-FE).
 
 | | GitHub Actions (`.github/workflows/ci.yml`) | GitLab CI (`.gitlab-ci.yml`) |
 |---|---|---|
-| Setiap PR/MR | ruff, pytest, docker build (tanpa push) | ruff, pytest (+ coverage), SBOM Trivy |
-| Push ke `main` | sama | + SonarQube, image `:production` ke registry GitLab, deploy ke server prod saat tombol ▶ `deploy-production` diklik |
+| PR / MR | ruff, pytest, docker build (tanpa push) | build, ruff, pytest (+ coverage), SBOM Trivy |
+| `development` | sama | + SonarQube, image `:development`, deploy otomatis ke server dev (`SSH_HOST_PISMART_DEV`), health check |
+| `main` | sama | + image `:production`, deploy ke server prod (`SSH_HOST_PISMART_2ND`) saat tombol ▶ `deploy-production` diklik, health check |
 
-Deploy memakai docker compose lewat SSH, menunggu container healthy, lalu mengecek
-`/health` dari luar. Ada juga job manual `restart-production`. Variabel CI/CD yang
-dibutuhkan tertulis di bagian atas `.gitlab-ci.yml`. Data SQLite & upload disimpan di
-volume Docker `pismart-invoice-agent-runtime`, jadi tetap ada saat redeploy.
+Deploy memakai docker compose lewat SSH dan menunggu container healthy. Ada job manual
+`restart-development` / `restart-production`. Variabel CI/CD yang dibutuhkan tertulis di
+bagian atas `.gitlab-ci.yml`. Data SQLite & upload disimpan di volume Docker
+`pismart-invoice-agent-runtime` di masing-masing server, jadi tetap ada saat redeploy.
 
 ## API Endpoint
 
