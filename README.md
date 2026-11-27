@@ -227,8 +227,26 @@ file_path: /path/to/dokumen.pdf
 ## Menjalankan Tests
 
 ```bash
+pip install -r requirements-dev.txt
+ruff check .
 pytest tests/ -v
 ```
+
+Tes tidak memanggil LLM dan tidak membaca `PINTER_API_KEY` dari `.env`.
+
+## CI/CD
+
+Repo ini di-mirror ke GitHub dan GitLab kantor; keduanya menjalankan lint dan tes.
+
+| | GitHub Actions (`.github/workflows/ci.yml`) | GitLab CI (`.gitlab-ci.yml`) |
+|---|---|---|
+| Setiap PR/MR & push | ruff, pytest, docker build (tanpa push) | ruff, pytest (+ coverage), SBOM Trivy |
+| `development` | sama | + SonarQube, image `:development` ke registry GitLab, deploy ke server dev (docker compose), health check |
+| `main` | sama | + image `:production` (deploy production manual) |
+
+Variabel CI/CD yang dibutuhkan GitLab tertulis di bagian atas `.gitlab-ci.yml`.
+Di server dev, data SQLite & upload disimpan di volume Docker
+`pismart-invoice-agent-runtime`, jadi tetap ada saat redeploy.
 
 ## API Endpoint
 
