@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from baca_invoice.models.travel_document import InvoiceLineItem, ReceiptItem, TravelDocumentResult
-from baca_invoice.models.unknown import UnknownResult
 
 
 def test_invoice_line_item_defaults():
@@ -85,23 +84,14 @@ def test_travel_document_string_normalization():
     assert result.facilities == "wifi, gym"
 
 
-def test_unknown_result_doc_type_literal():
-    result = UnknownResult()
+def test_travel_document_defaults_to_unknown():
+    result = TravelDocumentResult()
     assert result.doc_type == "unknown"
+    assert result.document_subtype == "unknown"
 
 
-def test_unknown_result_defaults():
-    result = UnknownResult()
-    assert result.extraction_confidence == 0.0
-    assert result.requires_manual_review is True
-    assert len(result.review_reasons) == 1
-    reason = result.review_reasons[0].lower()
-    assert "invoice" in reason or "unknown" in reason
-    assert result.summary != ""
-
-
-def test_unknown_result_review_reasons_independent():
-    a = UnknownResult()
-    b = UnknownResult()
+def test_travel_document_review_reasons_independent():
+    a = TravelDocumentResult()
+    b = TravelDocumentResult()
     a.review_reasons.append("extra")
-    assert len(b.review_reasons) == 1
+    assert b.review_reasons == []

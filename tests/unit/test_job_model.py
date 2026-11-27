@@ -1,58 +1,53 @@
 from __future__ import annotations
 
-import asyncio
+from web.config import UPLOAD_DIR
+from web.services.jobs import Job, JobStatus, cleanup_job_file
 
-from web.services.agent_runner import Job, JobStatus
 
-
-def make_job() -> Job:
-    return Job(job_id="test-id", filename="test.pdf", file_path="/tmp/test.pdf")  # noqa: S108
+def make_job(file_path: str = "/tmp/test.pdf") -> Job:  # noqa: S108
+    return Job(job_id="test-id", filename="test.pdf", file_path=file_path)
 
 
 def test_job_initial_state():
     job = make_job()
     assert job.status == JobStatus.PENDING
-    assert job.events == []
     assert job.result is None
     assert job.error is None
+    assert job.error_code is None
 
 
-def test_push_appends_event():
-    job = make_job()
-    job.push({"type": "status", "message": "hello"})
-    assert len(job.events) == 1
-    assert job.events[0]["message"] == "hello"
+def test_cleanup_removes_job_directory_inside_upload_dir():
+    job_dir = UPLOAD_DIR / "job-cleanup-test"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    pdf = job_dir / "test.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    cleanup_job_file(make_job(str(pdf)))
+
+    assert not job_dir.exists()
+    assert UPLOAD_DIR.exists()
 
 
-async def test_push_wakes_waiter():
-    job = make_job()
+def test_cleanup_never_removes_upload_dir_itself():
+    pdf = UPLOAD_DIR / "direct.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
 
-    async def _pusher():
-        await asyncio.sleep(0.05)
-        job.push({"type": "status", "message": "ping"})
+    cleanup_job_file(make_job(str(pdf)))
 
-    task = asyncio.create_task(_pusher())
-    cursor = await asyncio.wait_for(job.wait_for_events(0, timeout=2.0), timeout=3.0)
-    await task
-    assert cursor == 0  # wait_for_events returns last cursor, new events available
-    assert len(job.events) == 1
+    assert UPLOAD_DIR.exists()
+    assert pdf.exists()
+    pdf.unlink()
 
 
-async def test_push_does_not_block_on_no_waiter():
-    job = make_job()
-    for i in range(10):
-        job.push({"type": "status", "message": str(i)})
-    assert len(job.events) == 10
+def test_cleanup_ignores_paths_outside_upload_dir(tmp_path):
+    outside = tmp_path / "outside" / "test.pdf"
+    outside.parent.mkdir()
+    outside.write_bytes(b"%PDF-1.4")
+
+    cleanup_job_file(make_job(str(outside)))
+
+    assert outside.exists()
 
 
-async def test_wait_for_events_returns_immediately_when_events_exist():
-    job = make_job()
-    job.push({"type": "status", "message": "already here"})
-    cursor = await asyncio.wait_for(job.wait_for_events(0, timeout=0.1), timeout=1.0)
-    assert cursor == 0
-
-
-async def test_wait_for_events_times_out_gracefully():
-    job = make_job()
-    cursor = await asyncio.wait_for(job.wait_for_events(0, timeout=0.1), timeout=1.0)
-    assert cursor == 0  # no events pushed, returns same cursor after timeout
+def test_cleanup_without_file_path_is_noop():
+    cleanup_job_file(make_job(""))
