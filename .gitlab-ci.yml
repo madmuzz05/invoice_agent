@@ -8,8 +8,8 @@
 # tunggu container healthy, lalu cek /health dari luar.
 #
 # Variabel CI/CD yang dibutuhkan (Settings → CI/CD → Variables, masked):
-#   Server deploy (variabel group pismart yang sudah ada):
-#     SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV, SERVER_SSH_USER, SERVER_SSH_PORT
+#   Server deploy: SSH_HOST_PISMART_DEV, SSH_KEY_PISMART_DEV, SERVER_SSH_PORT (group pismart),
+#     SERVER_SSH_USER (isi di project ini; tidak tersedia dari group untuk job production)
 #   Aplikasi (environment scope "production" atau "*"):
 #     APP_HOST_PORT      port di server yang diteruskan ke container (8080)
 #     PINTER_API_KEY     wajib
@@ -70,7 +70,9 @@ workflow:
   before_script:
     - test -n "$SSH_HOST_PISMART_DEV" || { echo "SSH_HOST_PISMART_DEV belum di-set"; exit 1; }
     - test -n "$SSH_KEY_PISMART_DEV" || { echo "SSH_KEY_PISMART_DEV belum di-set"; exit 1; }
-    - test -n "$SERVER_SSH_USER" && test -n "$SERVER_SSH_PORT"
+    # Satu cek per baris: kegagalan di awal rantai `a && b` tidak menghentikan job (set -e).
+    - test -n "$SERVER_SSH_USER" || { echo "SERVER_SSH_USER belum di-set"; exit 1; }
+    - test -n "$SERVER_SSH_PORT" || { echo "SERVER_SSH_PORT belum di-set"; exit 1; }
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh
     - printf '%s\n' "$SSH_KEY_PISMART_DEV" | tr -d '\r' > ~/.ssh/id_rsa
